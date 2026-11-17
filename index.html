@@ -83,7 +83,15 @@ body{background:var(--b);color:var(--t);padding:15px;display:flex;justify-conten
 .tab-content.active { display: flex; animation: fI .3s ease forwards; }
 
 .form-header-card { background: var(--c); border-radius: 20px; border-top: 8px solid var(--p); box-shadow: 0 10px 30px rgba(0,0,0,0.15); border: 1px solid var(--border); padding: 26px; }
-.form-card { background: var(--c); border-radius: 20px; border: 1px solid var(--border); border-left: 6px solid transparent; box-shadow: 0 10px 30px rgba(0,0,0,0.15); padding: 26px; cursor: grab; user-select: none; transition: transform 0.2s, border-color 0.2s; }
+.form-card { background: var(--c); border-radius: 20px; border: 1px solid var(--border); border-left: 6px solid transparent; box-shadow: 0 10px 30px rgba(0,0,0,0.15); padding: 26px; cursor: default; transition: border-color 0.2s, box-shadow 0.2s; }
+.form-card.is-selected { border-color: var(--p); box-shadow: 0 0 0 2px color-mix(in srgb, var(--p) 35%, transparent), 0 10px 30px rgba(0,0,0,0.2); }
+.question-insert-line { height: 14px; margin: -7px 0; position: relative; z-index: 3; cursor: pointer; display:flex; align-items:center; justify-content:center; }
+.question-insert-line::before { content:''; width:100%; height:2px; border-radius:3px; background:transparent; transition:all .15s; }
+.question-insert-line.active::before, .question-insert-line:hover::before { height:3px; background:var(--p); box-shadow:0 0 8px var(--p); }
+.question-insert-line.active::after { content:'ここに貼り付け'; position:absolute; right:8px; top:-17px; font-size:.7rem; color:var(--p); background:var(--c); padding:2px 7px; border-radius:6px; font-weight:800; }
+.question-comment-note { margin-top:12px; padding:10px 12px; border-left:3px solid var(--p); border-radius:8px; background:var(--p-light); color:var(--t); font-size:.85rem; white-space:pre-wrap; }
+body.answering .mobile-tab-bar { display:none !important; }
+body.answering { padding-bottom:12px !important; }
 
 .e-title { font-size: 1.6rem; font-weight: 800; border-bottom: 2px dashed transparent; outline: none; width: 100%; color: var(--t); background: transparent; }
 .e-desc { font-size: 0.95rem; border: none; border-bottom: 1px solid var(--border); outline: none; width: 100%; color: var(--t); padding: 6px 0; background: transparent; margin-top: 10px; }
@@ -175,6 +183,7 @@ body{background:var(--b);color:var(--t);padding:15px;display:flex;justify-conten
   }
   .site-header { display: none; }
   .mobile-tab-bar { display: flex; }
+  body.answering .mobile-tab-bar { display:none !important; }
   body { padding: 12px; padding-bottom: 160px; }
 }
 </style>
@@ -371,7 +380,7 @@ body{background:var(--b);color:var(--t);padding:15px;display:flex;justify-conten
   <div id="pageHowToUse" class="page-section">
     <div class="form-header-card pop-anim">
       <h2 style="margin-bottom:15px; color:var(--p); font-size:1.4rem;">Q and F Maker の使い方</h2>
-      <p style="line-height:1.7; margin-bottom:12px; color:#cbd5e1;">質問はドラッグで自由に位置を並べ替えることができます。「テキスト追加」は問題に答えない説明用セクションになります。</p>
+      <p style="line-height:1.7; margin-bottom:12px; color:#cbd5e1;">質問カードの外側をクリックして選択し、Ctrl + Cでコピー、Ctrl + Xで切り取りができます。質問の間のラインをクリックして位置を選び、Ctrl + Vまたはラインのダブルクリックで貼り付けます。「テキスト追加」は問題に答えない説明用セクションになります。</p>
       <button class="m-btn" style="font-size:0.95rem; padding:10px 20px; border-radius:12px;" onclick="goHome()">ホームに戻る</button>
     </div>
   </div>
@@ -550,6 +559,9 @@ let questionsData=[], activePlayData=[], userFormAnswers=[], sc=0, totalScore=0,
 let submittingResponse = false, responseSubmitted = false, answeredQuestionCount = 0;
 let isFavorite = false, isPublicState = false;
 let isNewlyCreated = false;
+let selectedQuestionIndex = null;
+let questionInsertIndex = null;
+let questionClipboard = null;
 
 function truncateText(str, maxLen = 6) {
   if (!str) return "";
@@ -708,6 +720,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 });
 
 function switchPage(pageName){
+  document.body.classList.toggle('answering', pageName === 'play');
   if (pageName !== 'edit' && currentFileId && isNewlyCreated) {
     checkAndDeleteEmptyNewForm();
   }
@@ -1178,7 +1191,8 @@ function collectQuestionsFromDOM(){
       imageUrl: safeMediaUrl(imgInput ? imgInput.value.trim() : (oldObj.imageUrl || "")),
       videoUrl: safeMediaUrl(vidInput ? vidInput.value.trim() : (oldObj.videoUrl || ""), 'video'),
       required: reqCheck ? reqCheck.checked : (oldObj.required || false),
-      maxLen: maxLenInput ? parseInt(maxLenInput.value) || 0 : (oldObj.maxLen || 0)
+      maxLen: maxLenInput ? parseInt(maxLenInput.value) || 0 : (oldObj.maxLen || 0),
+      comment: oldObj.comment || ''
     });
   });
   if(newQData.length > 0) questionsData = newQData;
@@ -1193,7 +1207,6 @@ function renderQuestionsEditor(){
     const card = document.createElement('div');
     card.className = 'form-card';
     card.dataset.index = index;
-    card.draggable = true;
     
     if(!qObj.opts) qObj.opts = ["", ""];
     if(!qObj.optJumps) qObj.optJumps = qObj.opts.map(() => "");
@@ -1258,9 +1271,6 @@ function renderQuestionsEditor(){
         <div class="q-card-header-bottom">
           <div></div>
           <div class="card-actions">
-            <button type="button" class="card-action-btn" onclick="moveQuestionPrompt(${index})">位置変更</button>
-            ${index > 0 ? `<button type="button" class="card-action-btn" onclick="moveQuestion(${index}, -1)">↑</button>` : ''}
-            ${index < questionsData.length - 1 ? `<button type="button" class="card-action-btn" onclick="moveQuestion(${index}, 1)">↓</button>` : ''}
             <button type="button" class="card-action-btn" onclick="duplicateQuestion(${index})">複製</button>
             <button type="button" class="card-action-btn del" onclick="deleteQuestion(${index})">削除</button>
           </div>
@@ -1308,22 +1318,123 @@ function renderQuestionsEditor(){
       ` : ''}
     `;
 
-    card.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', index); card.classList.add('dragging'); });
-    card.addEventListener('dragend', () => card.classList.remove('dragging'));
-    card.addEventListener('dragover', (e) => e.preventDefault());
-    card.addEventListener('drop', (e) => {
-      e.preventDefault();
+    if (qObj.comment) {
+      const note = document.createElement('div');
+      note.className = 'question-comment-note';
+      note.textContent = '💬 コメント：' + qObj.comment;
+      card.appendChild(note);
+    }
+
+    card.addEventListener('click', (event) => {
+      if (event.target.closest('input, textarea, select, button, label, a')) return;
+      selectQuestionForEditing(index);
+    });
+    card.addEventListener('focusin', () => selectQuestionForEditing(index));
+    container.appendChild(card);
+  });
+}
+
+
+function selectQuestionForEditing(index) {
+  selectedQuestionIndex = index;
+  document.querySelectorAll('#questionsContainer .form-card').forEach((card, i) => {
+    card.classList.toggle('is-selected', i === index);
+  });
+}
+
+function renderQuestionInsertionLines() {
+  const container = document.getElementById('questionsContainer');
+  container.querySelectorAll('.question-insert-line').forEach(line => line.remove());
+  const cards = Array.from(container.querySelectorAll('.form-card'));
+  for (let i = 0; i <= cards.length; i++) {
+    const line = document.createElement('div');
+    line.className = 'question-insert-line' + (questionInsertIndex === i ? ' active' : '');
+    line.title = 'クリックで貼り付け位置を選択 / ダブルクリックで貼り付け';
+    line.addEventListener('click', () => {
+      questionInsertIndex = i;
+      container.querySelectorAll('.question-insert-line').forEach((item, idx) => {
+        item.classList.toggle('active', idx === questionInsertIndex);
+      });
+    });
+    line.addEventListener('dblclick', () => pasteQuestionAt(i));
+    if (i < cards.length) container.insertBefore(line, cards[i]);
+    else container.appendChild(line);
+  }
+}
+
+function copyOrCutQuestion(cut = false) {
+  if (selectedQuestionIndex === null || !questionsData[selectedQuestionIndex]) return;
+  collectQuestionsFromDOM();
+  questionClipboard = JSON.parse(JSON.stringify(questionsData[selectedQuestionIndex]));
+  if (cut) {
+    if (questionsData.length <= 1) return alert('最低1問必要です');
+    reorderQuestions(() => questionsData.splice(selectedQuestionIndex, 1));
+    questionInsertIndex = Math.min(selectedQuestionIndex, questionsData.length);
+    selectedQuestionIndex = null;
+    renderQuestionsEditor();
+    autoSaveCloud();
+  } else {
+    alert('質問をコピーしました。挿入ラインを選んで Ctrl + V で貼り付けできます。');
+  }
+}
+
+function pasteQuestionAt(index = questionInsertIndex) {
+  if (!questionClipboard) return;
+  collectQuestionsFromDOM();
+  const safeIndex = Math.max(0, Math.min(Number(index ?? questionsData.length), questionsData.length));
+  const copied = JSON.parse(JSON.stringify(questionClipboard));
+  reorderQuestions(() => questionsData.splice(safeIndex, 0, copied));
+  selectedQuestionIndex = safeIndex;
+  questionInsertIndex = safeIndex + 1;
+  renderQuestionsEditor();
+  selectQuestionForEditing(safeIndex);
+  autoSaveCloud();
+}
+
+function installEditorShortcuts() {
+  if (window.__qfmEditorShortcutsInstalled) return;
+  window.__qfmEditorShortcutsInstalled = true;
+  document.addEventListener('keydown', async (event) => {
+    const isEditor = document.getElementById('pageEdit')?.classList.contains('active')
+      && document.getElementById('tabContentQuestions')?.classList.contains('active');
+    if (!isEditor || event.altKey && !event.ctrlKey) return;
+    const target = event.target;
+    const typing = target && (target.matches('input, textarea, select') || target.isContentEditable);
+    const key = event.key.toLowerCase();
+
+    // 隠しコメント：PCのみ Ctrl + Alt + M
+    if (event.ctrlKey && event.altKey && key === 'm') {
+      if (window.matchMedia('(max-width: 768px)').matches) return;
+      event.preventDefault();
+      if (selectedQuestionIndex === null || !questionsData[selectedQuestionIndex]) {
+        alert('コメントを付ける質問のカードを先に選択してください。');
+        return;
+      }
       collectQuestionsFromDOM();
-      const fromIdx = parseInt(e.dataTransfer.getData('text/plain'));
-      const toIdx = index;
-      if(fromIdx !== toIdx){
-        reorderQuestions(()=>{const moved = questionsData.splice(fromIdx, 1)[0]; questionsData.splice(toIdx, 0, moved);});
+      const current = questionsData[selectedQuestionIndex].comment || '';
+      const value = await askInPage('この質問に付ける非公開コメントを入力してください（空欄で削除）:', current);
+      if (value !== null) {
+        questionsData[selectedQuestionIndex].comment = String(value).trim();
         renderQuestionsEditor();
+        selectQuestionForEditing(selectedQuestionIndex);
         autoSaveCloud();
       }
-    });
+      return;
+    }
 
-    container.appendChild(card);
+    if (!event.ctrlKey || typing) return;
+    if (key === 'c') {
+      event.preventDefault();
+      copyOrCutQuestion(false);
+    } else if (key === 'x') {
+      event.preventDefault();
+      copyOrCutQuestion(true);
+    } else if (key === 'v') {
+      if (questionClipboard) {
+        event.preventDefault();
+        pasteQuestionAt(questionInsertIndex ?? questionsData.length);
+      }
+    }
   });
 }
 
@@ -1649,7 +1760,7 @@ function normalizeQuestions(value) {
     ans:String(item.ans??''), exp:String(item.exp??''), hint:String(item.hint??''),
     diff:item.diff||'★☆☆', score:Number(item.score)||10,
     imageUrl:safeMediaUrl(item.imageUrl), videoUrl:safeMediaUrl(item.videoUrl,'video'),
-    required:!!item.required, maxLen:Number(item.maxLen)||0
+    required:!!item.required, maxLen:Number(item.maxLen)||0, comment:String(item.comment || '')
   }));
 }
 
