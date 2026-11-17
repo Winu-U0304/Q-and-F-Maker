@@ -144,7 +144,12 @@ body.answering { padding-bottom:12px !important; }
 .q-title-view { font-size: 1.5rem; font-weight: 800; color: var(--p); margin-bottom: 10px; text-align: center; }
 .play-form-desc { font-size: 0.95rem; color: #94a3b8; margin-bottom: 25px; text-align: center; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
 
-.play-question-block { background: var(--input-bg); border: 1px solid var(--border); border-radius: 16px; padding: 20px; margin-bottom: 20px; }
+.play-question-block { background: var(--c); border: 1px solid #dadce0; border-radius: 9px; padding: 28px 30px; margin-bottom: 16px; box-shadow: 0 1px 2px rgba(60,64,67,.12); }
+.play-question-block .q-text { font-size: 1.05rem; font-weight: 500; margin-bottom: 26px; color: var(--t); }
+.play-question-block .text-ans-input { width: min(100%, 420px); border: 0; border-bottom: 1px solid #bdbdbd; border-radius: 0; padding: 8px 0; background: transparent; font-weight: 400; }
+.play-question-block .text-ans-input:focus { border-bottom: 2px solid var(--p); }
+.play-footer-note { margin: 24px 0 8px; color: #5f6368; font-size: .88rem; line-height: 1.8; }
+.play-footer-credit { color: #5f6368; font-size: .82rem; line-height: 1.8; margin-bottom: 12px; }
 .q-text { font-size: 1.1rem; margin-bottom: 12px; font-weight: 700; color: var(--t); }
 .hint-box { background: rgba(99,102,241,0.1); border: 1px dashed var(--p); padding: 10px 14px; border-radius: 12px; font-size: 0.9rem; color: var(--p); margin-bottom: 12px; font-weight: 600; }
 
@@ -288,7 +293,7 @@ body.answering { padding-bottom:12px !important; }
     <div id="tabContentQuestions" class="tab-content active">
       <div class="floating-toolbar">
         <button class="ft-btn" onclick="addQuestionCard()">+ 質問追加</button>
-        <button class="ft-btn" onclick="addTextSection()">📝 テキスト追加</button>
+        <button class="ft-btn" onclick="addTextSection()">＋ セクションを追加</button>
         <button class="ft-btn" onclick="promptAddMedia('image')">🖼️ 画像挿入</button>
       </div>
       <div class="form-header-card pop-anim">
@@ -394,9 +399,11 @@ body.answering { padding-bottom:12px !important; }
       <div class="play-form-desc" id="playFormDesc"></div>
       <div id="playQuestionsContainer" style="display:flex; flex-direction:column; gap:20px;"></div>
       
-      <div style="margin-top:25px; display:flex; justify-content:center; gap:12px; flex-wrap:wrap;">
-        <button class="m-btn s-btn" style="font-size:1rem; padding:14px 36px; border-radius:16px;" onclick="submitPlayAnswers()">回答を送信する</button>
+      <div style="margin-top:25px; display:flex; justify-content:flex-start; gap:12px; flex-wrap:wrap;">
+        <button class="m-btn s-btn" style="font-size:1rem; padding:14px 36px; border-radius:10px;" onclick="submitPlayAnswers()">回答を送信する</button>
       </div>
+      <div class="play-footer-note">Q and F Makerでパスワードを送信しないでください。</div>
+      <div class="play-footer-credit">このコンテンツは winu-u0304 が作成または承認したものではありません。</div>
     </div>
   </div>
 
@@ -967,6 +974,7 @@ async function createNewQuiz(category = "一般", tag = "general"){
   document.getElementById('selAppMode').value = appMode;
   document.getElementById('shArea').style.display = 'none';
   renderQuestionsEditor();
+  saveStatus('未変更');
   switchPage('edit');
 }
 
@@ -1093,13 +1101,25 @@ async function deleteFile(id){
 let saveQueue = Promise.resolve(true), saveSequence = 0;
 function saveStatus(text) {
   let el = document.getElementById('save-status');
-  if(!el) { el=document.createElement('div'); el.id='save-status'; el.style.cssText='font-size:.8rem;padding:6px;color:var(--t)'; document.getElementById('quiz-title-input').after(el); }
-  el.textContent=text;
+  if(!el) {
+    el=document.createElement('div');
+    el.id='save-status';
+    el.style.cssText='display:flex;align-items:center;gap:7px;font-size:.8rem;padding:6px 0;color:var(--t);min-height:28px';
+    const title=document.getElementById('quiz-title-input');
+    if(title) title.after(el);
+  }
+  const saved = text === '保存済み';
+  const unchanged = text === '未変更';
+  const icon = saved ? 'cloud.png' : 'none-cloud.png';
+  el.innerHTML = `<img src="${icon}" alt="${saved ? '保存済み' : '未保存'}" style="width:25px;height:25px;object-fit:contain;">` +
+    (unchanged ? '' : `<span>${text}</span>`);
 }
+
 function autoSaveCloud(){
   if(!currentFileId || isSharedMode) return Promise.resolve(false);
   isNewlyCreated = false;
   const targetId=currentFileId, sequence=++saveSequence;
+  saveStatus('変更を保存中…');
   quizTitle = document.getElementById('quiz-title-input').value.trim() || "無題";
   quizDesc = document.getElementById('qDesc').value.trim();
   quizGenre = document.getElementById('quizGenre').value.trim() || "一般";
@@ -1851,7 +1871,7 @@ function beginQuizPlay(){
       });
       innerContent += `</div>`;
     } else {
-      innerContent = `<input type="${q.type === 'date' ? 'date' : q.type === 'number' ? 'number' : 'text'}" class="text-ans-input" placeholder="回答を入力してください" oninput="userFormAnswers[${qIdx}] = this.value">`;
+      innerContent = `<input type="${q.type === 'date' ? 'date' : q.type === 'number' ? 'number' : 'text'}" class="text-ans-input" placeholder="回答を入力" oninput="userFormAnswers[${qIdx}] = this.value">`;
     }
 
     block.innerHTML = `
