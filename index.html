@@ -278,6 +278,7 @@ body.answering { padding-bottom:12px !important; }
     </div>
 
     <div class="form-sort-filter-bar" id="formSortFilterBar"></div>
+    <div class="category-filter-bar" id="genreFilterBar"></div>
     <div class="category-filter-bar" id="categoryFilterBar"></div>
     <div class="file-grid" id="fileGrid"></div>
   </div>
@@ -301,8 +302,12 @@ body.answering { padding-bottom:12px !important; }
         <input type="text" id="qDesc" class="e-desc" placeholder="フォームの説明を入力" oninput="autoSaveCloud()">
         
         <div style="margin-top:15px; display:flex; gap:15px; align-items:center; flex-wrap:wrap;">
-          <label style="font-size:0.95rem; font-weight:700; color:#94a3b8;">ジャンル: <input type="text" id="quizGenre" oninput="autoSaveCloud()" placeholder="例: アンケート" style="padding:8px 12px; border:1px solid var(--border); border-radius:10px; width:160px; font-size:0.95rem; background:var(--input-bg); color:var(--t);"></label>
-          <label style="font-size:0.95rem; font-weight:700; color:#94a3b8;">カテゴリ: <input type="text" id="quizCategory" oninput="autoSaveCloud()" placeholder="例: 一般" style="padding:8px 12px; border:1px solid var(--border); border-radius:10px; width:160px; font-size:0.95rem; background:var(--input-bg); color:var(--t);"></label>
+          <label style="font-size:0.95rem; font-weight:700; color:#94a3b8;">ジャンル:
+            <select id="quizGenre" onchange="handleTaxonomySelect('genre', this.value)" style="padding:8px 12px; border:1px solid var(--border); border-radius:10px; min-width:160px; font-size:0.95rem; background:var(--input-bg); color:var(--t);"></select>
+          </label>
+          <label style="font-size:0.95rem; font-weight:700; color:#94a3b8;">カテゴリ:
+            <select id="quizCategory" onchange="handleTaxonomySelect('category', this.value)" style="padding:8px 12px; border:1px solid var(--border); border-radius:10px; min-width:160px; font-size:0.95rem; background:var(--input-bg); color:var(--t);"></select>
+          </label>
           <label style="font-size:0.95rem; font-weight:700; color:#94a3b8; display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" id="chkFavorite" onchange="autoSaveCloud()"> ⭐ お気に入り</label>
         </div>
       </div>
@@ -587,6 +592,9 @@ function lineShare() {
 
 let questionsData=[], activePlayData=[], userFormAnswers=[], sc=0, totalScore=0, quizTitle="", quizDesc="", quizGenre="", quizCategory="General", quizTag="", quizDeadline="", appMode="form", shuffleMode=false, speedBonus=false, preventOnce=false, timeLimit=0, randomCount=0, currentFileId=null, isSharedMode=false, activeCategoryFilter="すべて", activeFormFilter="すべて", cloudResponseList = [];
 let submittingResponse = false, responseSubmitted = false, answeredQuestionCount = 0;
+let activeGenreFilter = "すべて";
+let taxonomyCache = { genre: ["一般"], category: ["一般"] };
+let taxonomyUserKey = "qfm_taxonomy_guest";
 let quizMaxScore = 0, quizCorrectCount = 0, quizGradedCount = 0;
 let isFavorite = false, isPublicState = false;
 let formSettings = { startAt: "", responseLimit: 0, collectEmail: false, allowEdit: false, accentColor: "#6366f1", cardColor: "#1e293b", headerImage: "", completionMessage: "あなたの回答は正常に保存されました。" };
@@ -839,6 +847,105 @@ function goHome(){
   try { history.replaceState(null, '', window.location.pathname); } catch {}
 }
 
+function taxonomyStorageKey(userId) {
+  return `qfm_taxonomy_${String(userId || 'guest')}`;
+}
+function loadTaxonomy(userId, allFiles = []) {
+  taxonomyUserKey = taxonomyStorageKey(userId);
+  let saved = {};
+  try { saved = JSON.parse(safeStorage.getItem(taxonomyUserKey) || '{}') || {}; } catch {}
+  const collect = (type, field) => {
+    const values = Array.isArray(saved[type]) ? saved[type] : [];
+    allFiles.forEach(file => {
+      const value = String(file[field] || '').trim();
+      if (value) values.push(value);
+    });
+    const defaults = type === 'genre' ? ['一般'] : ['一般'];
+    return [...new Set([...defaults, ...values.map(v => String(v).trim()).filter(Boolean)])];
+  };
+  taxonomyCache = {
+    genre: collect('genre', 'genre'),
+    category: collect('category', 'category')
+  };
+  saveTaxonomy();
+}
+function saveTaxonomy() {
+  safeStorage.setItem(taxonomyUserKey, JSON.stringify(taxonomyCache));
+}
+function renderTaxonomySelect(type, selectedValue) {
+  const id = type === 'genre' ? 'quizGenre' : 'quizCategory';
+  const select = document.getElementById(id);
+  if (!select) return;
+  const value = String(selectedValue || (type === 'genre' ? '一般' : '一般'));
+  if (!taxonomyCache[type].includes(value)) taxonomyCache[type].push(value);
+  select.replaceChildren();
+  taxonomyCache[type].forEach(item => {
+    const option = document.createElement('option');
+    option.value = item;
+    option.textContent = item;
+    select.appendChild(option);
+  });
+  const addOption = document.createElement('option');
+  addOption.value = '__qfm_create__';
+  addOption.textContent = '＋ 新規作成…';
+  select.appendChild(addOption);
+  select.value = value;
+}
+async function handleTaxonomySelect(type, value) {
+  if (value === '__qfm_create__') {
+    const label = type === 'genre' ? 'ジャンル' : 'カテゴリ';
+    const name = await askInPage(`新しい${label}名を入力してください:`, '');
+    const select = document.getElementById(type === 'genre' ? 'quizGenre' : 'quizCategory');
+    if (name && name.trim()) {
+      const clean = name.trim().slice(0, 40);
+      if (!taxonomyCache[type].includes(clean)) taxonomyCache[type].push(clean);
+      saveTaxonomy();
+      renderTaxonomySelect(type, clean);
+      if (type === 'genre') quizGenre = clean; else quizCategory = clean;
+      autoSaveCloud();
+    } else {
+      renderTaxonomySelect(type, type === 'genre' ? quizGenre : quizCategory);
+    }
+    return;
+  }
+  if (type === 'genre') quizGenre = value; else quizCategory = value;
+  autoSaveCloud();
+}
+async function addTaxonomyFromHome(type) {
+  const label = type === 'genre' ? 'ジャンル' : 'カテゴリ';
+  const name = await askInPage(`新しい${label}名を入力してください:`, '');
+  if (!name || !name.trim()) return;
+  const clean = name.trim().slice(0, 40);
+  if (taxonomyCache[type].includes(clean)) return alert(`「${clean}」は既に登録されています。`);
+  taxonomyCache[type].push(clean);
+  saveTaxonomy();
+  if (type === 'genre') activeGenreFilter = clean;
+  else activeCategoryFilter = clean;
+  const { data: { session } } = await dbClient.auth.getSession();
+  if (session) loadMyForms(session.user.id);
+  alert(`${label}「${clean}」を追加しました。フォーム作成時に選択できます。`);
+}
+function renderTaxonomyFilterBar(containerId, type, activeValue, onSelect) {
+  const bar = document.getElementById(containerId);
+  if (!bar) return;
+  bar.replaceChildren();
+  const values = ['すべて', ...taxonomyCache[type]];
+  values.forEach(value => {
+    const chip = document.createElement('button');
+    chip.className = 'cat-filter-chip' + (activeValue === value ? ' active' : '');
+    chip.textContent = value;
+    chip.onclick = () => onSelect(value);
+    bar.appendChild(chip);
+  });
+  const add = document.createElement('button');
+  add.className = 'cat-filter-chip';
+  add.style.background = 'var(--s)';
+  add.style.color = '#0f172a';
+  add.textContent = type === 'genre' ? '+ ジャンルを新規作成' : '+ カテゴリを新規作成';
+  add.onclick = () => addTaxonomyFromHome(type);
+  bar.appendChild(add);
+}
+
 async function loadMyForms(userId){
  try {
   const { data: files, error } = await dbClient
@@ -864,35 +971,16 @@ async function loadMyForms(userId){
     sortBar.appendChild(chip);
   });
 
-  // 下段：ジャンル／カテゴリによる絞り込み
-  const categories = ["すべて"];
-  allFiles.forEach(f => {
-    const cat = f.category && f.category.trim() ? f.category.trim() : "一般";
-    if(!categories.includes(cat)) categories.push(cat);
+  // ジャンル・カテゴリは別々に管理し、ホームからも新規追加できる
+  loadTaxonomy(userId, allFiles);
+  if (!taxonomyCache.genre.includes(activeGenreFilter)) activeGenreFilter = 'すべて';
+  if (!taxonomyCache.category.includes(activeCategoryFilter)) activeCategoryFilter = 'すべて';
+  renderTaxonomyFilterBar('genreFilterBar', 'genre', activeGenreFilter, value => {
+    activeGenreFilter = value; loadMyForms(userId);
   });
-
-  if (!categories.includes(activeCategoryFilter)) activeCategoryFilter = 'すべて';
-  const catBar = document.getElementById('categoryFilterBar');
-  catBar.innerHTML = '';
-
-  categories.forEach(cat => {
-    const chip = document.createElement('button');
-    chip.className = 'cat-filter-chip ' + (activeCategoryFilter === cat ? 'active' : '');
-    chip.textContent = cat;
-    chip.onclick = () => { activeCategoryFilter = cat; loadMyForms(userId); };
-    catBar.appendChild(chip);
+  renderTaxonomyFilterBar('categoryFilterBar', 'category', activeCategoryFilter, value => {
+    activeCategoryFilter = value; loadMyForms(userId);
   });
-
-  const addCatChip = document.createElement('button');
-  addCatChip.className = 'cat-filter-chip';
-  addCatChip.style.background = 'var(--s)';
-  addCatChip.style.color = '#0f172a';
-  addCatChip.innerHTML = '+ ジャンル/カテゴリ追加';
-  addCatChip.onclick = async () => {
-    let newCatName = await askInPage('新しく追加するカテゴリ名を入力してください:', '一般');
-    if (newCatName && newCatName.trim()) createNewQuizInCategory(newCatName.trim());
-  };
-  catBar.appendChild(addCatChip);
 
   const grid = document.getElementById('fileGrid');
   grid.innerHTML = '';
@@ -902,17 +990,20 @@ async function loadMyForms(userId){
   newCard.innerHTML = `<div>+ 新規作成</div>`;
   newCard.onclick = () => {
     const targetCat = activeCategoryFilter === 'すべて' ? '一般' : activeCategoryFilter;
-    createNewQuiz(targetCat, targetCat);
+    const targetGenre = activeGenreFilter === 'すべて' ? '一般' : activeGenreFilter;
+    createNewQuiz(targetCat, targetGenre);
   };
   grid.appendChild(newCard);
 
   const getEditedTime = file => new Date(file.updated_at || file.created_at || 0).getTime();
   const visibleFiles = allFiles.filter(file => {
     const fileCat = file.category && file.category.trim() ? file.category.trim() : '一般';
+    const fileGenre = file.genre && file.genre.trim() ? file.genre.trim() : '一般';
     const fileFav = !!file.is_favorite;
 
     // 「古いフォーム」は期間で除外せず、全フォームを最終編集日時の古い順で表示する
     if (activeFormFilter === 'お気に入りフォーム' && !fileFav) return false;
+    if (activeGenreFilter !== 'すべて' && activeGenreFilter !== fileGenre) return false;
     if (activeCategoryFilter !== 'すべて' && activeCategoryFilter !== fileCat) return false;
     return true;
   }).sort((a, b) => {
@@ -978,12 +1069,12 @@ function resetNewFormSettings() {
   cloudResponseList=[]; document.getElementById('answerStatsContainer').replaceChildren();
 }
 
-async function createNewQuiz(category = "一般", tag = "general"){
+async function createNewQuiz(category = "一般", genre = "一般"){
   const { data: { session } } = await dbClient.auth.getSession();
   if(!session){ alert('ログインが必要です。'); return; }
   resetNewFormSettings();
   
-  quizTitle = "無題のフォーム"; quizDesc = ""; quizGenre = "一般"; quizCategory = category; quizTag = tag; quizDeadline = ""; appMode = "form";
+  quizTitle = "無題のフォーム"; quizDesc = ""; quizGenre = genre || "一般"; quizCategory = category || "一般"; quizTag = quizGenre; quizDeadline = ""; appMode = "form";
   questionsData = [{ q: "", type: "select", opts: ["", ""], optJumps: ["", ""], ans: "A", exp: "", hint: "", diff: "★☆☆", score: 10, imageUrl: "", videoUrl: "", required: false, maxLen: 0 }];
   
   isNewlyCreated = true;
@@ -1013,8 +1104,8 @@ async function createNewQuiz(category = "一般", tag = "general"){
   currentFileId = data.id;
   document.getElementById('quiz-title-input').value = quizTitle;
   document.getElementById('qDesc').value = quizDesc;
-  document.getElementById('quizGenre').value = quizGenre;
-  document.getElementById('quizCategory').value = quizCategory;
+  renderTaxonomySelect('genre', quizGenre);
+  renderTaxonomySelect('category', quizCategory);
   document.getElementById('chkFavorite').checked = false;
   document.getElementById('selAppMode').value = appMode;
   document.getElementById('shArea').style.display = 'none';
@@ -1081,8 +1172,8 @@ async function createFromTemplate(type){
   currentFileId = data.id;
   document.getElementById('quiz-title-input').value = quizTitle;
   document.getElementById('qDesc').value = quizDesc;
-  document.getElementById('quizGenre').value = quizGenre;
-  document.getElementById('quizCategory').value = quizCategory;
+  renderTaxonomySelect('genre', quizGenre);
+  renderTaxonomySelect('category', quizCategory);
   document.getElementById('chkFavorite').checked = false;
   document.getElementById('selAppMode').value = appMode;
   document.getElementById('shArea').style.display = 'none';
@@ -1110,8 +1201,8 @@ async function openFile(id){
   
   document.getElementById('quiz-title-input').value = quizTitle;
   document.getElementById('qDesc').value = quizDesc;
-  document.getElementById('quizGenre').value = quizGenre;
-  document.getElementById('quizCategory').value = quizCategory;
+  renderTaxonomySelect('genre', quizGenre);
+  renderTaxonomySelect('category', quizCategory);
   document.getElementById('chkFavorite').checked = isFavorite;
   document.getElementById('quizDeadline').value = quizDeadline ? quizDeadline.slice(0, 16) : "";
   document.getElementById('responseStartAt').value = formSettings.startAt ? formSettings.startAt.slice(0,16) : "";
