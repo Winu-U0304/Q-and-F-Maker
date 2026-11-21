@@ -195,6 +195,7 @@ body.answering { padding-bottom:12px !important; }
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body class="theme-blue">
 <div class="con" id="app">
@@ -343,6 +344,7 @@ body.answering { padding-bottom:12px !important; }
             </select>
             <button class="m-btn s-btn" style="padding:6px 14px; font-size:0.85rem; border-radius:8px;" onclick="exportStatsImage()">統計結果を画像保存</button>
             <button class="m-btn" style="padding:6px 14px; font-size:0.85rem; border-radius:8px; background:#059669;" onclick="exportAnswersCSV()">回答をCSVでダウンロード</button>
+            <button class="m-btn" style="padding:6px 14px; font-size:0.85rem; border-radius:8px; background:#2563eb;" onclick="exportAnswersExcel()">Excel（.xlsx）で保存</button>
             <span style="font-size:0.85rem; color:#94a3b8; font-weight:700;">表示切替:</span>
             <select id="statDisplayMode" onchange="renderAnswerStats()" style="background:var(--input-bg); color:var(--t); border:1px solid var(--border); padding:6px 12px; border-radius:8px; font-weight:bold; outline:none; cursor:pointer;">
               <option value="table">スプレッドシート(表)形式</option>
@@ -353,6 +355,19 @@ body.answering { padding-bottom:12px !important; }
             </select>
           </div>
         </div>
+        <section style="margin:16px 0 4px; padding:16px; border:1px solid var(--border); border-radius:14px; background:var(--input-bg);">
+          <h4 style="color:var(--p); margin-bottom:8px;">Googleスプレッドシート連携</h4>
+          <p style="font-size:.83rem; color:#94a3b8; line-height:1.7; margin-bottom:10px;">Apps ScriptのウェブアプリURLと共有キーを設定すると、現在読み込んでいる回答データをスプレッドシートへ書き出せます。設定はこのブラウザに保存されます。</p>
+          <label for="qfmSheetsUrl" style="display:block;font-size:.85rem;font-weight:700;margin:8px 0 5px;">Apps Script ウェブアプリURL</label>
+          <input id="qfmSheetsUrl" type="url" placeholder="https://script.google.com/macros/s/.../exec" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:9px;background:var(--c);color:var(--t);">
+          <label for="qfmSheetsKey" style="display:block;font-size:.85rem;font-weight:700;margin:10px 0 5px;">共有キー</label>
+          <input id="qfmSheetsKey" type="password" autocomplete="off" placeholder="Apps Script側で設定した共有キー" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:9px;background:var(--c);color:var(--t);">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+            <button class="m-btn" style="padding:8px 14px;font-size:.85rem;" onclick="saveGoogleSheetsConfig()">連携設定を保存</button>
+            <button class="m-btn s-btn" style="padding:8px 14px;font-size:.85rem;" onclick="syncAnswersToGoogleSheets()">回答データをシートへ同期</button>
+          </div>
+          <div id="qfmSheetsStatus" role="status" style="font-size:.8rem;color:#94a3b8;margin-top:9px;line-height:1.6;">未設定</div>
+        </section>
         <div id="answerStatsContainer" style="font-weight:600; line-height:1.6; overflow-x:auto;">読込中...</div>
       </div>
     </div>
@@ -592,6 +607,10 @@ function lineShare() {
 
 let questionsData=[], activePlayData=[], userFormAnswers=[], sc=0, totalScore=0, quizTitle="", quizDesc="", quizGenre="", quizCategory="General", quizTag="", quizDeadline="", appMode="form", shuffleMode=false, speedBonus=false, preventOnce=false, timeLimit=0, randomCount=0, currentFileId=null, isSharedMode=false, activeCategoryFilter="すべて", activeFormFilter="すべて", cloudResponseList = [];
 let submittingResponse = false, responseSubmitted = false, answeredQuestionCount = 0;
+let visiblePlayQuestionIndexes = new Set();
+let activeFormRealtimeChannel = null;
+let localSaveTimestamps = new Set();
+let remoteUpdateNoticeShown = false;
 let activeGenreFilter = "すべて";
 let taxonomyCache = { genre: ["一般"], category: ["一般"] };
 let taxonomyUserKey = "qfm_taxonomy_guest";
@@ -834,7 +853,7 @@ function switchFormTab(tabName){
   } else if(tabName === 'answers'){
     document.getElementById('ftabAnswers').classList.add('active');
     document.getElementById('tabContentAnswers').classList.add('active');
-    if(currentFileId) loadMyFormResponses(currentFileId);
+    if(currentFileId) { loadGoogleSheetsConfig(); loadMyFormResponses(currentFileId); }
   } else if(tabName === 'settings'){
     document.getElementById('ftabSettings').classList.add('active');
     document.getElementById('tabContentSettings').classList.add('active');
@@ -1181,6 +1200,48 @@ async function createFromTemplate(type){
   switchPage('edit');
 }
 
+
+function stopFormRealtimeWatch(){
+  if(activeFormRealtimeChannel && dbClient && typeof dbClient.removeChannel === 'function'){
+    try { dbClient.removeChannel(activeFormRealtimeChannel); } catch {}
+  }
+  activeFormRealtimeChannel = null;
+  remoteUpdateNoticeShown = false;
+}
+function startFormRealtimeWatch(formId){
+  stopFormRealtimeWatch();
+  if(!formId || !dbClient || typeof dbClient.channel !== 'function') return;
+  try {
+    activeFormRealtimeChannel = dbClient.channel(`qfm-form-watch-${formId}`)
+      .on('postgres_changes', { event:'UPDATE', schema:'public', table:'forms', filter:`id=eq.${formId}` }, payload => {
+        const stamp = payload?.new?.updated_at;
+        if(stamp && localSaveTimestamps.has(stamp)) { localSaveTimestamps.delete(stamp); return; }
+        const remote = payload?.new || {};
+        const remoteQuestions = normalizeQuestions(remote.quiz_data || []);
+        const localQuestions = normalizeQuestions(questionsData);
+        const sameLocalContent = remote.title === quizTitle && remote.desc === quizDesc && remote.genre === quizGenre &&
+          JSON.stringify(remoteQuestions) === JSON.stringify(localQuestions);
+        if(sameLocalContent) return;
+        if(remoteUpdateNoticeShown) return;
+        remoteUpdateNoticeShown = true;
+        showNotice('このフォームが別の編集画面から更新されました。現在の画面は自動上書きせず、編集内容を守るため更新通知だけを表示しています。');
+        const box = document.getElementById('app-notice');
+        if(box && !box.querySelector('[data-qfm-reload]')){
+          const reload = document.createElement('button');
+          reload.textContent = 'クラウドの最新版を読み込む';
+          reload.className = 'm-btn'; reload.style.margin = '10px 8px 0 0';
+          reload.dataset.qfmReload = '1';
+          reload.onclick = async () => {
+            const ok = await askInPage('現在の編集内容を破棄して、クラウドの最新版を読み込みますか？', undefined);
+            if(ok) { remoteUpdateNoticeShown = false; await openFile(formId); }
+          };
+          box.append(reload);
+        }
+      })
+      .subscribe();
+  } catch { activeFormRealtimeChannel = null; }
+}
+
 async function openFile(id){
   isNewlyCreated = false;
   cloudResponseList=[];
@@ -1232,6 +1293,7 @@ async function openFile(id){
   if(questionsData.length === 0) questionsData = [{ q: "", type: "select", opts: ["", ""], optJumps: ["", ""], ans: "A", exp: "", hint: "", diff: "★☆☆", score: 10, imageUrl: "", videoUrl: "", required: false, maxLen: 0 }];
   renderQuestionsEditor();
   switchPage('edit');
+  startFormRealtimeWatch(currentFileId);
 }
 
 async function deleteFile(id){
@@ -1300,6 +1362,7 @@ function autoSaveCloud(){
     tm: parseInt(document.getElementById('selTimer').value),
     quiz_data: { _qf_settings: formSettings, questions: questionsData }
   };
+  if(payload.updated_at) localSaveTimestamps.add(payload.updated_at);
   saveStatus('保存中…');
   const job = async () => {
     try {
@@ -1412,7 +1475,7 @@ function renderQuestionsEditor(){
           <div class="option-edit-row">
             <span class="opt-badge">${badge}</span>
             <input type="text" class="opt-input option-value-input" value="${val}" placeholder="選択肢 ${badge}" oninput="autoSaveCloud()">
-            <select class="cond-jump-select" onchange="autoSaveCloud()">${jumpOptions}</select>
+            ${['select','radio','dropdown'].includes(qObj.type) ? `<select class="cond-jump-select" title="この回答を選んだときの移動先" onchange="autoSaveCloud()">${jumpOptions}</select>` : `<span style="font-size:.75rem;color:#94a3b8;">条件分岐は単一選択のみ</span>`}
             ${optCount > 2 ? `<button type="button" class="del-opt-btn" onclick="removeOption(${index}, ${i})">×</button>` : ''}
           </div>`;
       }
@@ -1789,9 +1852,20 @@ function showDetailModal() {
 }
 
 async function loadMyFormResponses(formId) {
-    const { data: responseList } = await dbClient.from('responses').select('*').eq('form_id', formId);
-    cloudResponseList = responseList || [];
+    const pageSize = 1000;
+    const maxRows = 10000;
+    const allResponses = [];
+    for(let offset = 0; offset < maxRows; offset += pageSize){
+      const { data, error } = await dbClient.from('responses').select('*').eq('form_id', formId)
+        .order('created_at', { ascending:false }).range(offset, offset + pageSize - 1);
+      if(error) { alert('回答データを読み込めませんでした。通信状態とSupabaseの権限を確認してください。'); return; }
+      const page = data || [];
+      allResponses.push(...page);
+      if(page.length < pageSize) break;
+    }
+    cloudResponseList = allResponses;
     renderAnswerStats();
+    if(cloudResponseList.length >= maxRows) showNotice('表示上限の10,000件に達しました。これ以上の大規模運用では、サーバー側集計・ページ表示への移行をおすすめします。');
 }
 
 function generateConicPieChart(items, totalVotes) {
@@ -1819,7 +1893,7 @@ function renderAnswerStats(){
   const container = document.getElementById('answerStatsContainer');
   const mode = document.getElementById('statDisplayMode').value;
   let records = cloudResponseList.map(rec => ({...rec, username:escapeHtml(rec.username), score:escapeHtml(rec.score),
-    answer_data:Array.isArray(rec.answer_data) ? rec.answer_data.map(v=>escapeHtml(typeof v === 'object' ? (v?.name ? `添付: ${v.name}` : JSON.stringify(v)) : v)) : escapeHtml(JSON.stringify(rec.answer_data))}));
+    answer_data:Array.isArray(rec.answer_data) ? rec.answer_data.map(v=>v && typeof v === 'object' ? {...v, name:escapeHtml(v.name || '')} : escapeHtml(v)) : escapeHtml(JSON.stringify(rec.answer_data))}));
   const searchText = (document.getElementById('responseSearch')?.value || '').trim().toLocaleLowerCase();
   if(searchText) records = records.filter(rec => `${rec.username} ${JSON.stringify(rec.answer_data || '')}`.toLocaleLowerCase().includes(searchText));
   const sortMode = document.getElementById('responseSort')?.value || 'new';
@@ -1838,8 +1912,9 @@ function renderAnswerStats(){
       questionsData.forEach((q, qIdx) => {
         if(q.type !== 'info') {
           let ansVal = (rec.answer_data && rec.answer_data[qIdx] !== undefined) ? rec.answer_data[qIdx] : '-';
-          if(ansVal && typeof ansVal === 'object') ansVal = ansVal.name ? `添付: ${ansVal.name}` : JSON.stringify(ansVal);
-          tableHtml += `<td style="padding:10px; border:1px solid var(--border);">${ansVal}</td>`;
+          if(ansVal && typeof ansVal === 'object' && ansVal.path) ansVal = `<button class="file-action-btn" onclick="openUploadedAnswerFile('${escapeHtml(ansVal.path)}')">📎 ${ansVal.name || '添付ファイルを開く'}</button>`;
+          else if(ansVal && typeof ansVal === 'object') ansVal = ansVal.name ? `添付: ${ansVal.name}` : escapeHtml(JSON.stringify(ansVal));
+          tableHtml += `<td style="padding:10px; border:1px solid var(--border);">${ansVal ?? '-'}</td>`;
         }
       });
       tableHtml += `</tr>`;
@@ -1891,6 +1966,8 @@ function renderAnswerStats(){
         records.forEach(rec => { 
           let ansData = rec.answer_data;
           let val = Array.isArray(ansData) ? ansData[qIdx] : ansData;
+          if(val && typeof val === 'object' && val.path) val = `<button class="file-action-btn" onclick="openUploadedAnswerFile('${escapeHtml(val.path)}')">📎 ${val.name || '添付ファイルを開く'}</button>`;
+          else if(val && typeof val === 'object') val = escapeHtml(val.name ? `添付: ${val.name}` : JSON.stringify(val));
           if(val) html += `<li style="background:var(--border); padding:6px 10px; border-radius:8px; color:var(--t);">${val} <span style="font-size:0.75rem; color:#94a3b8; float:right;">(${rec.username})</span></li>`; 
         });
         html += `</ul>`;
@@ -1900,6 +1977,90 @@ function renderAnswerStats(){
     container.innerHTML = html;
   } else {
     container.innerHTML = `<ul style="list-style:none; display:flex; flex-direction:column; gap:8px;">` + records.map((r, i)=>`<li style="padding:10px; background:var(--input-bg); border-radius:10px; display:flex; justify-content:space-between; border:1px solid var(--border);"><span>${i+1}. ${r.username}</span> <b>${r.score}</b></li>`).join('') + `</ul>`;
+  }
+}
+
+function answerExportHeaders(){
+  const headers = ['回答ID', '回答者名', '回答日時', 'スコア'];
+  questionsData.forEach((q, idx) => { if(q.type !== 'info') headers.push(`Q${idx+1}: ${q.q || '（無題）'}`); });
+  return headers;
+}
+function answerExportRows(){
+  return cloudResponseList.map(rec => {
+    const row = [rec.id || '', rec.username || '匿名', rec.created_at || '', rec.score || ''];
+    questionsData.forEach((q, idx) => {
+      if(q.type === 'info') return;
+      let value = rec.answer_data && rec.answer_data[idx] !== undefined ? rec.answer_data[idx] : '';
+      if(value && typeof value === 'object') value = value.name ? `添付: ${value.name}${value.path ? ` (${value.path})` : ''}` : JSON.stringify(value);
+      if(typeof value === 'string' && /^[=+@\-\t\r]/.test(value)) value = "'" + value;
+      row.push(value == null ? '' : String(value));
+    });
+    return row;
+  });
+}
+function exportAnswersExcel(){
+  if(!cloudResponseList.length) return alert('データがありません');
+  if(typeof XLSX === 'undefined') return alert('Excel出力ライブラリを読み込めませんでした。通信状態を確認して再度お試しください。');
+  try {
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet([answerExportHeaders(), ...answerExportRows()]);
+    ws['!cols'] = answerExportHeaders().map((h, i) => ({ wch: i < 4 ? 20 : Math.min(42, Math.max(18, String(h).length + 4)) }));
+    ws['!autofilter'] = { ref: ws['!ref'] };
+    XLSX.utils.book_append_sheet(wb, ws, '回答データ');
+    const info = XLSX.utils.aoa_to_sheet([['フォーム名', quizTitle || '無題'], ['回答数', cloudResponseList.length], ['出力日時', new Date().toLocaleString('ja-JP')], ['モード', appMode === 'form' ? 'フォーム' : 'クイズ']]);
+    XLSX.utils.book_append_sheet(wb, info, 'フォーム情報');
+    const safeName = (quizTitle || 'フォーム').replace(/[\\/:*?"<>|]/g, '_').slice(0, 60);
+    XLSX.writeFile(wb, `${safeName}_回答.xlsx`);
+  } catch(error) { alert('Excel出力に失敗しました: ' + (error.message || error)); }
+}
+function googleSheetsConfigKey(){ return `qfm_sheets_config_${currentFileId || 'none'}`; }
+function loadGoogleSheetsConfig(){
+  const urlInput = document.getElementById('qfmSheetsUrl');
+  const keyInput = document.getElementById('qfmSheetsKey');
+  if(!urlInput || !keyInput || !currentFileId) return;
+  let config = {};
+  try { config = JSON.parse(safeStorage.getItem(googleSheetsConfigKey()) || '{}') || {}; } catch {}
+  urlInput.value = config.url || '';
+  keyInput.value = config.key || '';
+  const status = document.getElementById('qfmSheetsStatus');
+  if(status) status.textContent = config.url ? '連携設定を読み込みました。同期ボタンから送信できます。' : '未設定';
+}
+function saveGoogleSheetsConfig(){
+  if(!currentFileId) return alert('フォームを開いてから設定してください。');
+  const url = (document.getElementById('qfmSheetsUrl')?.value || '').trim();
+  const key = (document.getElementById('qfmSheetsKey')?.value || '').trim();
+  if(!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec(?:\?.*)?$/.test(url)) return alert('Apps ScriptのウェブアプリURL（https://script.google.com/macros/s/.../exec）を入力してください。');
+  if(!key) return alert('共有キーを入力してください。');
+  safeStorage.setItem(googleSheetsConfigKey(), JSON.stringify({url, key}));
+  const status = document.getElementById('qfmSheetsStatus');
+  if(status) status.textContent = '設定をこのブラウザに保存しました。';
+  alert('Googleスプレッドシート連携設定を保存しました。');
+}
+async function syncAnswersToGoogleSheets(){
+  if(!currentFileId) return alert('フォームを開いてから同期してください。');
+  if(!cloudResponseList.length) return alert('同期する回答データがありません。');
+  let config = {};
+  try { config = JSON.parse(safeStorage.getItem(googleSheetsConfigKey()) || '{}') || {}; } catch {}
+  if(!config.url || !config.key){ loadGoogleSheetsConfig(); return alert('先にApps Script URLと共有キーを入力して「連携設定を保存」してください。'); }
+  if(cloudResponseList.length > 5000) return alert('一度に同期できるのは5,000件までです。');
+  const status = document.getElementById('qfmSheetsStatus');
+  if(status) status.textContent = '送信処理中…';
+  const payload = {
+    key: config.key,
+    formId: currentFileId,
+    formTitle: quizTitle || 'Q and F Maker フォーム',
+    mode: 'replace',
+    headers: answerExportHeaders(),
+    rows: answerExportRows()
+  };
+  try {
+    // Apps Scriptへのシンプルリクエスト。no-corsでは応答本文を読めないため、成功確定とは表示しない。
+    await fetch(config.url, { method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain;charset=utf-8'}, body:JSON.stringify(payload) });
+    if(status) status.textContent = `同期リクエストを送信しました（${cloudResponseList.length}件）。Googleスプレッドシート側で反映を確認してください。`;
+    alert('同期リクエストを送信しました。no-cors通信のため、実際に反映されたかはGoogleスプレッドシート側で確認してください。');
+  } catch(error) {
+    if(status) status.textContent = '送信に失敗しました。URL・通信状態・Apps Scriptの公開設定を確認してください。';
+    alert('同期リクエストに失敗しました: ' + (error.message || error));
   }
 }
 
@@ -1998,14 +2159,15 @@ function normalizeQuestions(value) {
 function preparePlayData() {
   const original = JSON.parse(JSON.stringify(questionsData)).map((q,index)=>({...q,originalIndex:index}));
   let questionItems = original.filter(q => q.type !== 'info');
-  if(shuffleMode) {
+  const hasConditionalJumps = original.some(q => ['select','radio','dropdown'].includes(q.type) && (q.optJumps || []).some(v => String(v || '').trim() !== ''));
+  if(shuffleMode && !hasConditionalJumps) {
     for(let i=questionItems.length-1;i>0;i--) {
       const j=Math.floor(Math.random()*(i+1));
       [questionItems[i],questionItems[j]]=[questionItems[j],questionItems[i]];
     }
   }
   const requested = Math.max(0, Number(randomCount) || 0);
-  if(requested > 0 && requested < questionItems.length) questionItems = questionItems.slice(0, requested);
+  if(!hasConditionalJumps && requested > 0 && requested < questionItems.length) questionItems = questionItems.slice(0, requested);
   let cursor=0;
   return original.reduce((out,item)=>{
     if(item.type === 'info') out.push(item);
@@ -2061,10 +2223,11 @@ function closeQrModal(){ document.getElementById('qrModal').style.display = 'non
 function closeQrModalDirect(){ document.getElementById('qrModal').style.display = 'none'; }
 
 function updatePlayProgress() {
-  const total = activePlayData.filter(q => q.type !== 'info').length;
+  const visible = visiblePlayQuestionIndexes.size ? visiblePlayQuestionIndexes : new Set(activePlayData.map((_,i)=>i));
+  const total = activePlayData.filter((q,i) => q.type !== 'info' && visible.has(i)).length;
   let answered = 0;
   activePlayData.forEach((q, index) => {
-    if(q.type === 'info') return;
+    if(q.type === 'info' || !visible.has(index)) return;
     const value = userFormAnswers[index];
     const hasAnswer = value !== null && value !== undefined &&
       (typeof value === 'object' ? !!value.name : String(value).trim() !== '');
@@ -2088,8 +2251,9 @@ function quizRate() {
 
 function calculateQuizScore() {
   totalScore = 0; quizMaxScore = 0; quizCorrectCount = 0; quizGradedCount = 0;
+  const visibleQuestions = visiblePlayQuestionIndexes.size ? visiblePlayQuestionIndexes : new Set(activePlayData.map((_,i)=>i));
   activePlayData.forEach((q, index) => {
-    if(q.type === 'info' || !String(q.ans ?? '').trim()) return;
+    if(!visibleQuestions.has(index) || q.type === 'info' || !String(q.ans ?? '').trim()) return;
     if(q.type === 'file') return;
     const points = Math.max(0, Number(q.score) || 10);
     quizMaxScore += points;
@@ -2113,6 +2277,7 @@ function calculateQuizScore() {
 
 function beginQuizPlay(){
   if(!activePlayData.length) return;
+  visiblePlayQuestionIndexes = new Set();
   userFormAnswers = Array(activePlayData.length).fill(null);
   responseSubmitted = false;
   totalScore = 0; quizMaxScore = 0; quizCorrectCount = 0; quizGradedCount = 0;
@@ -2156,6 +2321,7 @@ function beginQuizPlay(){
   activePlayData.forEach((q, qIdx) => {
     const block = document.createElement('div');
     block.className = 'play-question-block';
+    block.dataset.playIndex = String(qIdx);
     
     if(q.type === 'info'){
       const infoImage = safeMediaUrl(q.imageUrl || '');
@@ -2167,7 +2333,7 @@ function beginQuizPlay(){
 
     let innerContent = '';
     if(q.type === 'dropdown'){
-      innerContent = `<select class="text-ans-input" onchange="userFormAnswers[${qIdx}] = this.value"><option value="">選択してください</option>${(q.opts||[]).map((v,i)=>`<option value="${String.fromCharCode(65+i)}">${escapeHtml(v)}</option>`).join('')}</select>`;
+      innerContent = `<select class="text-ans-input" onchange="userFormAnswers[${qIdx}] = this.value; applyConditionalBranching(); updatePlayProgress();"><option value="">選択してください</option>${(q.opts||[]).map((v,i)=>`<option value="${String.fromCharCode(65+i)}">${escapeHtml(v)}</option>`).join('')}</select>`;
     } else if(['select','radio','multi','checkbox'].includes(q.type)){
       innerContent = `<div class="o-grid" id="playOptGroup_${qIdx}">`;
       q.opts.forEach((optVal, oIdx) => {
@@ -2185,7 +2351,7 @@ function beginQuizPlay(){
     } else if(q.type === 'scale' || q.type === 'rating'){
       innerContent = `<div class="o-grid" style="display:flex;gap:10px;flex-wrap:wrap;">${[1,2,3,4,5].map(n=>`<button type="button" class="o-btn" onclick="selectScaleAnswer(${qIdx},${n},this,${q.type==='rating'})">${q.type==='rating'?'★'.repeat(n):n}</button>`).join('')}</div>`;
     } else if(q.type === 'file'){
-      innerContent = `<input type="file" class="text-ans-input" onchange="handleAnswerFile(event,${qIdx})">`;
+      innerContent = `<input type="file" class="text-ans-input" accept="image/jpeg,image/png,image/gif,image/webp,application/pdf" onchange="handleAnswerFile(event,${qIdx})"><small style="display:block;color:#94a3b8;margin-top:5px;">画像・PDF（最大10MB）</small>`;
     } else {
       const inputType = ['date','number','time'].includes(q.type) ? q.type : 'text';
       const maxAttr = Number(q.maxLen) > 0 && inputType === 'text' ? ` maxlength="${Math.min(5000, Math.max(1, Number(q.maxLen)))}"` : '';
@@ -2203,7 +2369,45 @@ function beginQuizPlay(){
   });
 
   switchPage('play');
+  applyConditionalBranching();
   updatePlayProgress();
+}
+
+
+function applyConditionalBranching(){
+  const blocks = Array.from(document.querySelectorAll('#playQuestionsContainer .play-question-block'));
+  const visible = new Set();
+  const hasJumps = activePlayData.some(q => ['select','radio','dropdown'].includes(q.type) && (q.optJumps || []).some(v => String(v || '').trim() !== ''));
+  if(!hasJumps){
+    blocks.forEach((block, i) => { block.style.display = ''; visible.add(i); });
+    visiblePlayQuestionIndexes = visible;
+    return visible;
+  }
+  let index = 0;
+  const visited = new Set();
+  while(index >= 0 && index < activePlayData.length && !visited.has(index)){
+    visited.add(index); visible.add(index);
+    const q = activePlayData[index];
+    let jump = '';
+    if(q && ['select','radio','dropdown'].includes(q.type)){
+      const answer = userFormAnswers[index];
+      if(answer !== null && answer !== undefined && String(answer).trim() !== ''){
+        const badge = String(answer).split(':')[0].trim().charAt(0).toUpperCase();
+        const optionIndex = badge.charCodeAt(0) - 65;
+        if(optionIndex >= 0 && optionIndex < (q.optJumps || []).length) jump = String(q.optJumps[optionIndex] || '');
+      }
+    }
+    if(jump === 'finish') break;
+    if(/^\d+$/.test(jump)){
+      const targetOriginalIndex = Number(jump);
+      const target = activePlayData.findIndex(item => item.originalIndex === targetOriginalIndex);
+      if(target >= 0 && !visited.has(target)){ index = target; continue; }
+    }
+    index++;
+  }
+  blocks.forEach((block, i) => { block.style.display = visible.has(i) ? '' : 'none'; });
+  visiblePlayQuestionIndexes = visible;
+  return visible;
 }
 
 function selectPlayOption(qIdx, badge, btnElem, isOther, allowMultiple = false) {
@@ -2216,6 +2420,7 @@ function selectPlayOption(qIdx, badge, btnElem, isOther, allowMultiple = false) 
       return code;
     }).filter(Boolean);
     userFormAnswers[qIdx] = selected.join(',');
+    applyConditionalBranching();
     updatePlayProgress();
     return;
   }
@@ -2228,6 +2433,7 @@ function selectPlayOption(qIdx, badge, btnElem, isOther, allowMultiple = false) 
   } else {
     userFormAnswers[qIdx] = badge;
   }
+  applyConditionalBranching();
   updatePlayProgress();
 }
 
@@ -2238,13 +2444,44 @@ function selectScaleAnswer(qIdx, value, btnElem, isRating){
   userFormAnswers[qIdx]=String(value);
   updatePlayProgress();
 }
-function handleAnswerFile(event,qIdx){
+async function handleAnswerFile(event,qIdx){
   const file=event.target.files && event.target.files[0];
   if(!file) return;
-  if(file.size>2*1024*1024){ alert('ファイルは2MB以下にしてください。'); event.target.value=''; return; }
-  const reader=new FileReader();
-  reader.onload=()=>{ userFormAnswers[qIdx]={name:file.name,type:file.type,data:reader.result}; updatePlayProgress(); };
-  reader.readAsDataURL(file);
+  const allowed = ['image/jpeg','image/png','image/gif','image/webp','application/pdf'];
+  if(!allowed.includes(file.type)) { alert('対応ファイルは JPG・PNG・GIF・WebP・PDF です。'); event.target.value=''; return; }
+  if(file.size > 10 * 1024 * 1024) { alert('ファイルは10MB以下にしてください。'); event.target.value=''; return; }
+  if(!isSharedMode){
+    userFormAnswers[qIdx] = { name:file.name, type:file.type, previewOnly:true };
+    updatePlayProgress();
+    alert('プレビューでは添付の確認のみ行います。実際の保存は公開フォームから送信してください。');
+    return;
+  }
+  const formId = new URLSearchParams(window.location.search).get('id') || currentFileId;
+  if(!formId || !dbClient.storage){ alert('ファイル保存機能を利用できません。Supabase Storageの設定を確認してください。'); event.target.value=''; return; }
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-100) || 'upload';
+  const unique = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const path = `${formId}/${unique}-${safeName}`;
+  const input = event.target;
+  input.disabled = true;
+  try {
+    const { data, error } = await dbClient.storage.from('qfm-uploads').upload(path, file, { upsert:false, contentType:file.type });
+    if(error) throw error;
+    userFormAnswers[qIdx] = { name:file.name, type:file.type, path:data?.path || path, bucket:'qfm-uploads' };
+    updatePlayProgress();
+    alert('ファイルを添付しました。');
+  } catch(error) {
+    alert('ファイルのアップロードに失敗しました。Supabase Storageの設定・権限を確認してください。');
+    input.value = '';
+  } finally { input.disabled = false; }
+}
+
+async function openUploadedAnswerFile(path){
+  if(!path || !dbClient.storage) return alert('添付ファイル情報がありません。');
+  try {
+    const { data, error } = await dbClient.storage.from('qfm-uploads').createSignedUrl(path, 3600);
+    if(error || !data?.signedUrl) throw error || new Error('URLを取得できません');
+    window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
+  } catch { alert('添付ファイルを開けません。フォーム所有者でログインしているか、Storageの閲覧ポリシーを確認してください。'); }
 }
 
 function updateOtherAnswer(qIdx, oIdx) {
@@ -2268,7 +2505,9 @@ function updateOtherAnswer(qIdx, oIdx) {
 }
 
 function submitPlayAnswers(){
+  const visibleQuestions = visiblePlayQuestionIndexes.size ? visiblePlayQuestionIndexes : new Set(activePlayData.map((_,i)=>i));
   for(let i=0; i<activePlayData.length; i++){
+    if(!visibleQuestions.has(i)) continue;
     const q = activePlayData[i];
     if(q.required && q.type !== 'info') {
       const value = userFormAnswers[i];
