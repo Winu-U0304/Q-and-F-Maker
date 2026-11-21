@@ -175,6 +175,36 @@ body.answering { padding-bottom:12px !important; }
 .tab-item { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; height: 100%; background: transparent; border: none; cursor: pointer; color: #94a3b8; font-size: 0.75rem; font-weight: 700; }
 .tab-item.active { color: var(--p); }
 
+@keyframes toastFadeOut {
+  0% { opacity: 1; transform: translateX(-50%) translateY(0); }
+  100% { opacity: 0; transform: translateX(-50%) translateY(10px); }
+}
+.qfm-toast-notice {
+  position: fixed;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%) translateY(0);
+  width: min(90vw, 560px);
+  padding: 16px 18px;
+  border-radius: 14px;
+  background: var(--c);
+  color: var(--t);
+  border: 1px solid var(--p);
+  z-index: 10000;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  white-space: pre-wrap;
+  line-height: 1.6;
+  font-size: 0.92rem;
+  font-weight: 600;
+  opacity: 1;
+  transition: opacity 0.45s ease, transform 0.45s ease;
+}
+.qfm-toast-notice.is-fading {
+  opacity: 0;
+  transform: translateX(-50%) translateY(10px);
+  pointer-events: none;
+}
+
 @media(max-width: 768px) {
   .floating-toolbar {
     top: 6px;
@@ -567,18 +597,60 @@ function safeMediaUrl(value, kind = 'image') {
   try { const u = new URL(raw); return /^https?:$/.test(u.protocol) ? u.href : ''; } catch { return ''; }
 }
 
-function showNotice(message) {
+let noticeFadeTimer = null;
+let noticeRemoveTimer = null;
+
+function dismissNotice() {
+  if (noticeFadeTimer) { clearTimeout(noticeFadeTimer); noticeFadeTimer = null; }
+  if (noticeRemoveTimer) { clearTimeout(noticeRemoveTimer); noticeRemoveTimer = null; }
+  const box = document.getElementById('app-notice');
+  if (!box) return;
+  box.classList.add('is-fading');
+  noticeRemoveTimer = setTimeout(() => {
+    const current = document.getElementById('app-notice');
+    if (current) current.remove();
+    noticeRemoveTimer = null;
+  }, 460);
+}
+
+function showNotice(message, durationMs = 2400) {
+  if (noticeFadeTimer) { clearTimeout(noticeFadeTimer); noticeFadeTimer = null; }
+  if (noticeRemoveTimer) { clearTimeout(noticeRemoveTimer); noticeRemoveTimer = null; }
   let box = document.getElementById('app-notice');
   if (!box) {
-    box = document.createElement('div'); box.id = 'app-notice'; box.setAttribute('role', 'status');
-    box.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);width:min(90vw,560px);padding:16px;border-radius:12px;background:var(--c);color:var(--t);border:1px solid var(--p);z-index:10000;box-shadow:0 8px 30px #0006;white-space:pre-wrap;';
-    const text = document.createElement('span'); text.id = 'app-notice-text'; box.append(text);
-    const close = document.createElement('button'); close.textContent = '閉じる'; close.className = 'file-action-btn'; close.style.marginTop = '10px'; close.onclick = () => box.remove(); box.append(close);
+    box = document.createElement('div');
+    box.id = 'app-notice';
+    box.className = 'qfm-toast-notice';
+    box.setAttribute('role', 'status');
+    const text = document.createElement('span');
+    text.id = 'app-notice-text';
+    box.append(text);
+
+    const actions = document.createElement('div');
+    actions.id = 'app-notice-actions';
+    actions.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center;';
+
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.textContent = '閉じる';
+    close.className = 'file-action-btn';
+    close.onclick = () => dismissNotice();
+    actions.append(close);
+    box.append(actions);
     document.body.append(box);
   }
+  box.classList.remove('is-fading');
+  const actions = document.getElementById('app-notice-actions');
+  if (actions) {
+    Array.from(actions.querySelectorAll('[data-qfm-reload]')).forEach(btn => btn.remove());
+  }
   document.getElementById('app-notice-text').textContent = String(message);
+
+  noticeFadeTimer = setTimeout(() => {
+    dismissNotice();
+  }, Math.max(1200, Number(durationMs) || 2400));
 }
-window.alert = showNotice;
+window.alert = (message) => showNotice(message, 2600);
 
 function askInPage(message, defaultValue) {
   return new Promise(resolve => {
@@ -597,29 +669,29 @@ function askInPage(message, defaultValue) {
 }
 function publicPageUrl() {
   if (!/^https?:$/.test(location.protocol) || location.origin === 'null' || window.self !== window.top) {
-    throw new Error('公開済みのHTTP(S)ページを直接開いて利用してください。');
+    throw new Error('公開済みのHTTP(S)ページを直接開いてご利用ください。');
   }
   return location.origin + location.pathname;
 }
 
 function copyLink() {
   const shInput = document.getElementById('shUrl');
-  if(!shInput || !shInput.value) { alert('コピーするURLがありません。'); return; }
+  if(!shInput || !shInput.value) { showNotice('コピーするURLがありません。'); return; }
   shInput.select(); shInput.setSelectionRange(0, 99999);
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(shInput.value).then(() => { alert('URLをコピーしました'); }).catch(() => { fallbackCopyText(shInput); });
+    navigator.clipboard.writeText(shInput.value).then(() => { showNotice('URLをコピーしました。'); }).catch(() => { fallbackCopyText(shInput); });
   } else { fallbackCopyText(shInput); }
 }
 function fallbackCopyText(inputElement) {
   try {
-    if (document.execCommand('copy')) alert('URLをコピーしました');
-    else alert('コピーに失敗しました');
-  } catch (err) { alert('コピー機能が制限されています'); }
+    if (document.execCommand('copy')) showNotice('URLをコピーしました。');
+    else showNotice('URLのコピーに失敗しました。');
+  } catch (err) { showNotice('お使いの環境ではコピー機能が制限されています。'); }
 }
 function lineShare() {
   const shInput = document.getElementById('shUrl');
   const url = shInput ? shInput.value : '';
-  if(!url) { alert('共有するURLがありません'); return; }
+  if(!url) { showNotice('共有するURLがありません。'); return; }
   window.open(`https://social-plugins.line.me/lineit/share?url=${encodeURIComponent(url)}`, '_blank', 'noopener,noreferrer');
 }
 
@@ -693,25 +765,25 @@ function togglePasswordVisibility() {
 
 async function signInWithGoogle() {
   const { error } = await dbClient.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: publicPageUrl() } });
-  if (error) alert("Googleログインエラー: " + error.message);
+  if (error) showNotice("Googleログインエラー: " + error.message);
 }
 
 async function handleSignUp() {
   const email = document.getElementById('auth-email').value.trim();
   const password = document.getElementById('auth-password').value;
-  if (!email || !password) return alert('メールアドレスとパスワードを入力してください。');
+  if (!email || !password) return showNotice('メールアドレスとパスワードを入力してください。');
   const { error } = await dbClient.auth.signUp({ email, password, options: { emailRedirectTo: publicPageUrl() } });
-  if (error) alert("登録エラー: " + error.message);
-  else alert("登録を受け付けました。確認メールをご確認ください。");
+  if (error) showNotice("登録エラー: " + error.message);
+  else showNotice("登録を受け付けました。確認メールをご確認ください。");
 }
 
 async function handleSignIn() {
   const email = document.getElementById('auth-email').value.trim();
   const password = document.getElementById('auth-password').value;
-  if (!email || !password) return alert('メールアドレスとパスワードを入力してください。');
+  if (!email || !password) return showNotice('メールアドレスとパスワードを入力してください。');
   const { error } = await dbClient.auth.signInWithPassword({ email, password });
-  if (error) alert("ログイン失敗: " + error.message);
-  else { alert("ログインしました"); document.getElementById('auth-password').value = ''; }
+  if (error) showNotice("ログインに失敗しました: " + error.message);
+  else { showNotice("ログインしました。"); document.getElementById('auth-password').value = ''; }
 }
 
 async function handleSignOut() {
@@ -747,6 +819,7 @@ dbClient.auth.onAuthStateChange((event, session) => {
 });
 
 window.addEventListener('DOMContentLoaded', async () => {
+  installEditorShortcuts();
   const savedMode = safeStorage.getItem('formapp_mode');
   const savedTheme = safeStorage.getItem('formapp_theme') || 'blue';
   if(savedMode === 'light'){
@@ -764,14 +837,14 @@ window.addEventListener('DOMContentLoaded', async () => {
     safeStorage.setItem('qfm_pending_collab_token', collabToken);
     const { data: { session } } = await dbClient.auth.getSession();
     if (session) await acceptCollabInvite(collabToken);
-    else { switchPage('home'); showNotice('共同編集リンクを受け取りました。ログインまたは新規登録すると参加できます。'); }
+    else { switchPage('home'); showNotice('共同編集リンクを受け取りました。ログインまたは新規登録を行うと参加できます。', 3600); }
     return;
   }
   
   if (mode === 'answer' && formId) {
     const { data, error } = await dbClient.from('forms').select('*').eq('id', formId).single();
     if (error || !data) {
-      alert("フォームの読み込みに失敗しました。");
+      showNotice("フォームの読み込みに失敗しました。");
       goHome();
       return;
     }
@@ -953,7 +1026,6 @@ async function handleTaxonomySelect(type, value) {
   if (value === '__qfm_create__') {
     const label = type === 'genre' ? 'ジャンル' : 'カテゴリ';
     const name = await askInPage(`新しい${label}名を入力してください:`, '');
-    const select = document.getElementById(type === 'genre' ? 'quizGenre' : 'quizCategory');
     if (name && name.trim()) {
       const clean = name.trim().slice(0, 40);
       if (!taxonomyCache[type].includes(clean)) taxonomyCache[type].push(clean);
@@ -974,14 +1046,14 @@ async function addTaxonomyFromHome(type) {
   const name = await askInPage(`新しい${label}名を入力してください:`, '');
   if (!name || !name.trim()) return;
   const clean = name.trim().slice(0, 40);
-  if (taxonomyCache[type].includes(clean)) return alert(`「${clean}」は既に登録されています。`);
+  if (taxonomyCache[type].includes(clean)) return showNotice(`「${clean}」はすでに登録されています。`);
   taxonomyCache[type].push(clean);
   saveTaxonomy();
   if (type === 'genre') activeGenreFilter = clean;
   else activeCategoryFilter = clean;
   const { data: { session } } = await dbClient.auth.getSession();
   if (session) loadMyForms(session.user.id);
-  alert(`${label}「${clean}」を追加しました。フォーム作成時に選択できます。`);
+  showNotice(`${label}「${clean}」を追加しました。フォーム作成時に選択できます。`);
 }
 function renderTaxonomyFilterBar(containerId, type, activeValue, onSelect) {
   const bar = document.getElementById(containerId);
@@ -1017,7 +1089,6 @@ async function loadMyForms(userId){
   const sortOptions = ["すべて", "新しいフォーム", "古いフォーム", "お気に入りフォーム"];
   if (!sortOptions.includes(activeFormFilter)) activeFormFilter = 'すべて';
 
-  // 上段：フォームの編集時期・お気に入りによる絞り込み
   const sortBar = document.getElementById('formSortFilterBar');
   sortBar.innerHTML = '';
   sortOptions.forEach(option => {
@@ -1028,7 +1099,6 @@ async function loadMyForms(userId){
     sortBar.appendChild(chip);
   });
 
-  // ジャンル・カテゴリは別々に管理し、ホームからも新規追加できる
   loadTaxonomy(userId, allFiles);
   if (!taxonomyCache.genre.includes(activeGenreFilter)) activeGenreFilter = 'すべて';
   if (!taxonomyCache.category.includes(activeCategoryFilter)) activeCategoryFilter = 'すべて';
@@ -1058,7 +1128,6 @@ async function loadMyForms(userId){
     const fileGenre = file.genre && file.genre.trim() ? file.genre.trim() : '一般';
     const fileFav = !!file.is_favorite;
 
-    // 「古いフォーム」は期間で除外せず、全フォームを最終編集日時の古い順で表示する
     if (activeFormFilter === 'お気に入りフォーム' && !fileFav) return false;
     if (activeGenreFilter !== 'すべて' && activeGenreFilter !== fileGenre) return false;
     if (activeCategoryFilter !== 'すべて' && activeCategoryFilter !== fileCat) return false;
@@ -1067,7 +1136,6 @@ async function loadMyForms(userId){
     const timeA = getEditedTime(a);
     const timeB = getEditedTime(b);
 
-    // 新しいフォーム：最近編集したものから／古いフォーム：昔編集したものから
     if (activeFormFilter === '古いフォーム') return timeA - timeB;
     return timeB - timeA;
   });
@@ -1128,7 +1196,7 @@ function resetNewFormSettings() {
 
 async function createNewQuiz(category = "一般", genre = "一般"){
   const { data: { session } } = await dbClient.auth.getSession();
-  if(!session){ alert('ログインが必要です。'); return; }
+  if(!session){ showNotice('ログインが必要です。'); return; }
   resetNewFormSettings();
   
   quizTitle = "無題のフォーム"; quizDesc = ""; quizGenre = genre || "一般"; quizCategory = category || "一般"; quizTag = quizGenre; quizDeadline = ""; appMode = "form";
@@ -1157,7 +1225,7 @@ async function createNewQuiz(category = "一般", genre = "一般"){
     data = res2.data; error = res2.error;
   }
 
-  if(error){ alert('作成エラー: ' + error.message); return; }
+  if(error){ showNotice('作成エラー: ' + error.message); return; }
   currentFileId = data.id;
   document.getElementById('quiz-title-input').value = quizTitle;
   document.getElementById('qDesc').value = quizDesc;
@@ -1178,7 +1246,7 @@ async function createNewQuizInCategory(categoryName) {
 
 async function createFromTemplate(type){
   const { data: { session } } = await dbClient.auth.getSession();
-  if(!session){ alert('ログインが必要です。'); return; }
+  if(!session){ showNotice('ログインが必要です。'); return; }
   resetNewFormSettings();
   
   quizDeadline = "";
@@ -1270,18 +1338,20 @@ function startFormRealtimeWatch(formId){
         if(sameLocalContent) return;
         if(remoteUpdateNoticeShown) return;
         remoteUpdateNoticeShown = true;
-        showNotice('共同編集者または別の編集画面から更新されました。編集中の内容を守るため自動上書きはせず、最新版の読み込みを選べます。');
-        const box = document.getElementById('app-notice');
-        if(box && !box.querySelector('[data-qfm-reload]')){
+        showNotice('共同編集者または別の編集画面から更新されました。編集中の内容を守るため自動上書きはせず、最新版の読み込みを選べます。', 5000);
+        const actions = document.getElementById('app-notice-actions');
+        if(actions && !actions.querySelector('[data-qfm-reload]')){
           const reload = document.createElement('button');
+          reload.type = 'button';
           reload.textContent = 'クラウドの最新版を読み込む';
-          reload.className = 'm-btn'; reload.style.margin = '10px 8px 0 0';
+          reload.className = 'file-action-btn s-btn';
           reload.dataset.qfmReload = '1';
           reload.onclick = async () => {
+            dismissNotice();
             const ok = await askInPage('現在の編集内容を破棄して、クラウドの最新版を読み込みますか？', undefined);
             if(ok) { remoteUpdateNoticeShown = false; await openFile(formId); }
           };
-          box.append(reload);
+          actions.append(reload);
         }
       })
       .subscribe();
@@ -1355,11 +1425,11 @@ async function openFile(id){
 }
 
 async function createCollabInvite(){
-  if(!currentFileId || !currentUserId || currentFormOwnerId !== currentUserId){ alert('共同編集リンクを発行できるのはフォームの所有者だけです。'); return; }
+  if(!currentFileId || !currentUserId || currentFormOwnerId !== currentUserId){ showNotice('共同編集リンクを発行できるのはフォームの所有者のみです。'); return; }
   const token = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`).replace(/-/g,'');
   const expiresAt = new Date(Date.now() + 7*24*60*60*1000).toISOString();
   const { error } = await dbClient.from('form_collab_invites').insert({ form_id: currentFileId, owner_id: currentUserId, token, expires_at: expiresAt });
-  if(error){ alert('招待リンクの発行に失敗しました。Supabaseの共同製作SQLを実行したか確認してね。\n' + error.message); return; }
+  if(error){ showNotice('招待リンクの発行に失敗しました。Supabaseの共同製作SQLが適用されているかご確認ください。\n' + error.message, 4000); return; }
   currentCollabInviteUrl = `${publicPageUrl()}?collab=${encodeURIComponent(token)}`;
   const input = document.getElementById('collabInviteUrl');
   if(input) input.value = currentCollabInviteUrl;
@@ -1368,7 +1438,7 @@ async function createCollabInvite(){
 }
 async function copyCollabInvite(){
   const value = document.getElementById('collabInviteUrl')?.value || currentCollabInviteUrl;
-  if(!value){ alert('先に共同編集リンクを発行してね。'); return; }
+  if(!value){ showNotice('先に共同編集リンクを発行してください。'); return; }
   try { await navigator.clipboard.writeText(value); showNotice('共同編集リンクをコピーしました。'); }
   catch { const input=document.getElementById('collabInviteUrl'); input?.select(); document.execCommand('copy'); showNotice('共同編集リンクをコピーしました。'); }
 }
@@ -1376,11 +1446,11 @@ async function acceptCollabInvite(token){
   if(!token || collabAcceptInProgress) return;
   collabAcceptInProgress = true;
   const { data: { session } } = await dbClient.auth.getSession();
-  if(!session){ safeStorage.setItem('qfm_pending_collab_token', token); switchPage('home'); showNotice('共同編集に参加するにはログインが必要です。'); collabAcceptInProgress = false; return; }
+  if(!session){ safeStorage.setItem('qfm_pending_collab_token', token); switchPage('home'); showNotice('共同編集に参加するにはログインが必要です。', 3600); collabAcceptInProgress = false; return; }
   const { data, error } = await dbClient.rpc('qfm_accept_collab_invite', { p_token: token });
   if(error || !data?.form_id){
     safeStorage.removeItem('qfm_pending_collab_token');
-    alert('招待リンクを利用できません。期限切れ・使用済み・無効なリンクの可能性があります。' + (error?.message ? '\n' + error.message : ''));
+    showNotice('招待リンクを利用できません。期限切れ・使用済み・無効なリンクの可能性があります。' + (error?.message ? '\n' + error.message : ''), 4000);
     try { history.replaceState(null,'',window.location.pathname); } catch {}
     collabAcceptInProgress = false;
     return;
@@ -1388,7 +1458,7 @@ async function acceptCollabInvite(token){
   safeStorage.removeItem('qfm_pending_collab_token');
   try { history.replaceState(null,'',window.location.pathname); } catch {}
   await openFile(data.form_id);
-  showNotice('共同製作に参加しました！編集内容はクラウドに自動保存されます。');
+  showNotice('共同製作に参加しました。編集内容はクラウドに自動保存されます。', 3200);
   collabAcceptInProgress = false;
 }
 
@@ -1467,7 +1537,6 @@ function autoSaveCloud(){
       if(sessionError || !session) throw new Error();
       
       let { error } = await dbClient.from('forms').update(payload).eq('id',targetId);
-      // 互換性のため、未追加の任意カラムがあれば外して再試行する
       for (let attempt = 0; error && attempt < 2; attempt++) {
         const message = error.message || '';
         if (message.includes('updated_at') && Object.prototype.hasOwnProperty.call(payload, 'updated_at')) {
@@ -1722,14 +1791,15 @@ function copyOrCutQuestion(cut = false) {
   collectQuestionsFromDOM();
   questionClipboard = JSON.parse(JSON.stringify(questionsData[selectedQuestionIndex]));
   if (cut) {
-    if (questionsData.length <= 1) return alert('最低1問必要です');
+    if (questionsData.length <= 1) return showNotice('最低1問は必要です。');
     reorderQuestions(() => questionsData.splice(selectedQuestionIndex, 1));
     questionInsertIndex = Math.min(selectedQuestionIndex, questionsData.length);
     selectedQuestionIndex = null;
     renderQuestionsEditor();
     autoSaveCloud();
+    showNotice('質問を切り取りました。挿入ラインを選んで Ctrl + V で貼り付けできます。');
   } else {
-    alert('質問をコピーしました。挿入ラインを選んで Ctrl + V で貼り付けできます。');
+    showNotice('質問をコピーしました。挿入ラインを選んで Ctrl + V で貼り付けできます。');
   }
 }
 
@@ -1744,6 +1814,7 @@ function pasteQuestionAt(index = questionInsertIndex) {
   renderQuestionsEditor();
   selectQuestionForEditing(safeIndex);
   autoSaveCloud();
+  showNotice('質問を貼り付けました。');
 }
 
 function installEditorShortcuts() {
@@ -1757,12 +1828,11 @@ function installEditorShortcuts() {
     const typing = target && (target.matches('input, textarea, select') || target.isContentEditable);
     const key = event.key.toLowerCase();
 
-    // 隠しコメント：PCのみ Ctrl + Alt + M
     if (event.ctrlKey && event.altKey && key === 'm') {
       if (window.matchMedia('(max-width: 768px)').matches) return;
       event.preventDefault();
       if (selectedQuestionIndex === null || !questionsData[selectedQuestionIndex]) {
-        alert('コメントを付ける質問のカードを先に選択してください。');
+        showNotice('コメントを付ける質問カードを先に選択してください。');
         return;
       }
       collectQuestionsFromDOM();
@@ -1773,6 +1843,7 @@ function installEditorShortcuts() {
         renderQuestionsEditor();
         selectQuestionForEditing(selectedQuestionIndex);
         autoSaveCloud();
+        showNotice(questionsData[selectedQuestionIndex].comment ? 'コメントを保存しました。' : 'コメントを削除しました。');
       }
       return;
     }
@@ -1798,7 +1869,7 @@ function handleMediaFileUpload(e, index, type){
   if(!file) return;
   const maxBytes = type === 'image' ? 3 * 1024 * 1024 : 5 * 1024 * 1024;
   if(file.size > maxBytes) {
-    alert(type === 'image' ? '画像ファイルは3MB以下にしてください。' : '動画ファイルは5MB以下にしてください。');
+    showNotice(type === 'image' ? '画像ファイルは3MB以下にしてください。' : '動画ファイルは5MB以下にしてください。');
     e.target.value = '';
     return;
   }
@@ -1809,14 +1880,14 @@ function handleMediaFileUpload(e, index, type){
     else questionsData[index].videoUrl = event.target.result;
     renderQuestionsEditor();
     autoSaveCloud();
-    alert('メディアファイルを設定しました');
+    showNotice('メディアファイルを設定しました。');
   };
   reader.readAsDataURL(file);
 }
 
 function addQuestionCard(){ collectQuestionsFromDOM(); questionsData.push({ q: "", type: "select", opts: ["", ""], optJumps: ["", ""], ans: "A", exp: "", hint: "", diff: "★☆☆", score: 10, imageUrl: "", videoUrl: "", required: false, maxLen: 0 }); renderQuestionsEditor(); autoSaveCloud(); }
 function addTextSection(){ collectQuestionsFromDOM(); questionsData.push({ q: "【セクション説明】", type: "info", opts: [], optJumps: [], ans: "", exp: "", hint: "", diff: "★☆☆", score: 0, imageUrl: "", videoUrl: "", required: false, maxLen: 0 }); renderQuestionsEditor(); autoSaveCloud(); }
-async function promptAddMedia(type){ collectQuestionsFromDOM(); if(questionsData.length === 0) addQuestionCard(); const u = await askInPage(type === 'video' ? '動画URLを入力:' : '画像URLを入力:', ''); if(u){ const safe=safeMediaUrl(u,type); if(!safe)return alert('有効なURLを入力してください'); questionsData[questionsData.length-1][type === 'video' ? 'videoUrl' : 'imageUrl']=safe; renderQuestionsEditor(); autoSaveCloud(); } }
+async function promptAddMedia(type){ collectQuestionsFromDOM(); if(questionsData.length === 0) addQuestionCard(); const u = await askInPage(type === 'video' ? '動画URLを入力してください:' : '画像URLを入力してください:', ''); if(u){ const safe=safeMediaUrl(u,type); if(!safe)return showNotice('有効なURLを入力してください。'); questionsData[questionsData.length-1][type === 'video' ? 'videoUrl' : 'imageUrl']=safe; renderQuestionsEditor(); autoSaveCloud(); } }
 
 function reorderQuestions(mutation){
   const previous=[...questionsData];
@@ -1827,7 +1898,7 @@ function reorderQuestions(mutation){
     q.optJumps=oldTargets.map(t=>typeof t==='object' ? (questionsData.includes(t)?String(questionsData.indexOf(t)):'') : t);
   });
 }
-function deleteQuestion(index){ collectQuestionsFromDOM(); if(questionsData.length<=1){alert('最低1問必要です');return;} reorderQuestions(()=>questionsData.splice(index,1)); renderQuestionsEditor(); autoSaveCloud(); }
+function deleteQuestion(index){ collectQuestionsFromDOM(); if(questionsData.length<=1){showNotice('最低1問は必要です。');return;} reorderQuestions(()=>questionsData.splice(index,1)); renderQuestionsEditor(); autoSaveCloud(); }
 function duplicateQuestion(index){ collectQuestionsFromDOM(); reorderQuestions(()=>questionsData.splice(index+1, 0, JSON.parse(JSON.stringify(questionsData[index])))); renderQuestionsEditor(); autoSaveCloud(); }
 function moveQuestion(index, dir){ collectQuestionsFromDOM(); const target = index + dir; if(target<0||target>=questionsData.length)return; reorderQuestions(()=>{ const tmp = questionsData[index]; questionsData[index] = questionsData[target]; questionsData[target] = tmp; }); renderQuestionsEditor(); autoSaveCloud(); }
 async function moveQuestionPrompt(index){
@@ -1845,7 +1916,7 @@ async function moveQuestionPrompt(index){
 function addOptionToQuestion(index){ collectQuestionsFromDOM(); if(questionsData[index].opts.length<10){ questionsData[index].opts.push(""); questionsData[index].optJumps.push(""); } renderQuestionsEditor(); autoSaveCloud(); }
 function addOtherOptionToQuestion(index){ collectQuestionsFromDOM(); if(questionsData[index].opts.length<10){ questionsData[index].opts.push("その他"); questionsData[index].optJumps.push(""); } renderQuestionsEditor(); autoSaveCloud(); }
 function removeOption(qIdx, optIdx){
-  collectQuestionsFromDOM(); const q=questionsData[qIdx]; if(q.opts.length<=2){alert('最低2つ必要です');return;}
+  collectQuestionsFromDOM(); const q=questionsData[qIdx]; if(q.opts.length<=2){showNotice('選択肢は最低2つ必要です。');return;}
   q.opts.splice(optIdx,1); q.optJumps.splice(optIdx,1);
   renderQuestionsEditor(); autoSaveCloud();
 }
@@ -1853,10 +1924,10 @@ function changeQuestionType(index, newType){ collectQuestionsFromDOM(); question
 
 async function saveAndGenerateShareUrl() {
     const { data: { session }, error: sessionError } = await dbClient.auth.getSession();
-    if (sessionError || !session) return alert("保存するにはログインが必要です。");
+    if (sessionError || !session) return showNotice("共有URLを発行するにはログインが必要です。");
 
     collectQuestionsFromDOM();
-    if (!await autoSaveCloud()) return alert("保存に失敗しました。");
+    if (!await autoSaveCloud()) return showNotice("保存に失敗しました。通信状態をご確認ください。");
 
     let { data: published, error: publishError } = await dbClient
         .from('forms')
@@ -1871,7 +1942,7 @@ async function saveAndGenerateShareUrl() {
       published = res2.data; publishError = res2.error;
     }
 
-    if (publishError || !published) return alert("共有設定に失敗しました。");
+    if (publishError || !published) return showNotice("共有設定に失敗しました。");
     isPublicState = true;
 
     let baseUrl = publicPageUrl();
@@ -1880,11 +1951,11 @@ async function saveAndGenerateShareUrl() {
     shInput.value = shareUrl;
     document.getElementById('shArea').style.display = 'block';
 
-    alert("公開され、共有URLを発行しました");
+    showNotice("公開設定を完了し、共有URLを発行しました。");
 }
 
 async function submitUserResponse() {
-  if(!isSharedMode) return alert('これは編集用プレビューです。');
+  if(!isSharedMode) return showNotice('これは編集用プレビューです。公開URLから回答してください。');
   if(submittingResponse || responseSubmitted) return;
   submittingResponse = true;
   const submitButton = document.querySelector('#rankingRegisterSection button[onclick="submitUserResponse()"]');
@@ -1916,7 +1987,6 @@ async function submitUserResponse() {
     const displayName = respondentName || '匿名';
     const storedRespondentName = respondentEmail ? `${displayName}（${respondentEmail}）` : displayName;
     const finalScore = appMode === 'form' ? 'フォーム回答' : (`${totalScore}点 (${quizRate()}%)`);
-    // 出題順をシャッフル／抽出していても、保存時は元の質問順に戻して集計とのズレを防ぐ。
     const detailedAnswers = Array(questionsData.length).fill(null);
     activePlayData.forEach((question, playIndex) => {
       if(Number.isInteger(question.originalIndex)) detailedAnswers[question.originalIndex] = userFormAnswers[playIndex];
@@ -1935,9 +2005,9 @@ async function submitUserResponse() {
     document.getElementById('resultHomeBtn').style.display = 'inline-flex';
     document.getElementById('resultDetailBtn').style.display = 'inline-flex';
     document.getElementById('resultHeaderTitle').style.display = 'none';
-    alert('回答を送信しました');
+    showNotice('回答を送信しました。ご協力ありがとうございました。');
   } catch(error) {
-    alert(error.message || '送信に失敗しました。');
+    showNotice(error.message || '送信に失敗しました。');
   } finally {
     submittingResponse = false;
     if(submitButton && !responseSubmitted) { submitButton.disabled = false; submitButton.textContent = '回答を送信・登録する'; }
@@ -1967,14 +2037,14 @@ async function loadMyFormResponses(formId) {
     for(let offset = 0; offset < maxRows; offset += pageSize){
       const { data, error } = await dbClient.from('responses').select('*').eq('form_id', formId)
         .order('created_at', { ascending:false }).range(offset, offset + pageSize - 1);
-      if(error) { alert('回答データを読み込めませんでした。通信状態とSupabaseの権限を確認してください。'); return; }
+      if(error) { showNotice('回答データを読み込めませんでした。通信状態とSupabaseの権限をご確認ください。', 4000); return; }
       const page = data || [];
       allResponses.push(...page);
       if(page.length < pageSize) break;
     }
     cloudResponseList = allResponses;
     renderAnswerStats();
-    if(cloudResponseList.length >= maxRows) showNotice('表示上限の10,000件に達しました。これ以上の大規模運用では、サーバー側集計・ページ表示への移行をおすすめします。');
+    if(cloudResponseList.length >= maxRows) showNotice('表示上限の10,000件に達しました。これ以上の大規模運用では、サーバー側集計・ページ表示への移行をおすすめします。', 5000);
 }
 
 function generateConicPieChart(items, totalVotes) {
@@ -2108,8 +2178,8 @@ function answerExportRows(){
   });
 }
 function exportAnswersExcel(){
-  if(!cloudResponseList.length) return alert('データがありません');
-  if(typeof XLSX === 'undefined') return alert('Excel出力ライブラリを読み込めませんでした。通信状態を確認して再度お試しください。');
+  if(!cloudResponseList.length) return showNotice('出力する回答データがありません。');
+  if(typeof XLSX === 'undefined') return showNotice('Excel出力ライブラリを読み込めませんでした。通信状態をご確認のうえ再度お試しください。');
   try {
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.aoa_to_sheet([answerExportHeaders(), ...answerExportRows()]);
@@ -2120,7 +2190,8 @@ function exportAnswersExcel(){
     XLSX.utils.book_append_sheet(wb, info, 'フォーム情報');
     const safeName = (quizTitle || 'フォーム').replace(/[\\/:*?"<>|]/g, '_').slice(0, 60);
     XLSX.writeFile(wb, `${safeName}_回答.xlsx`);
-  } catch(error) { alert('Excel出力に失敗しました: ' + (error.message || error)); }
+    showNotice('Excelファイルを保存しました。');
+  } catch(error) { showNotice('Excel出力に失敗しました: ' + (error.message || error)); }
 }
 function googleSheetsConfigKey(){ return `qfm_sheets_config_${currentFileId || 'none'}`; }
 function loadGoogleSheetsConfig(){
@@ -2135,23 +2206,23 @@ function loadGoogleSheetsConfig(){
   if(status) status.textContent = config.url ? '連携設定を読み込みました。同期ボタンから送信できます。' : '未設定';
 }
 function saveGoogleSheetsConfig(){
-  if(!currentFileId) return alert('フォームを開いてから設定してください。');
+  if(!currentFileId) return showNotice('フォームを開いてから設定してください。');
   const url = (document.getElementById('qfmSheetsUrl')?.value || '').trim();
   const key = (document.getElementById('qfmSheetsKey')?.value || '').trim();
-  if(!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec(?:\?.*)?$/.test(url)) return alert('Apps ScriptのウェブアプリURL（https://script.google.com/macros/s/.../exec）を入力してください。');
-  if(!key) return alert('共有キーを入力してください。');
+  if(!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec(?:\?.*)?$/.test(url)) return showNotice('Apps ScriptのウェブアプリURL（https://script.google.com/macros/s/.../exec）を入力してください。');
+  if(!key) return showNotice('共有キーを入力してください。');
   safeStorage.setItem(googleSheetsConfigKey(), JSON.stringify({url, key}));
   const status = document.getElementById('qfmSheetsStatus');
   if(status) status.textContent = '設定をこのブラウザに保存しました。';
-  alert('Googleスプレッドシート連携設定を保存しました。');
+  showNotice('Googleスプレッドシート連携設定を保存しました。');
 }
 async function syncAnswersToGoogleSheets(){
-  if(!currentFileId) return alert('フォームを開いてから同期してください。');
-  if(!cloudResponseList.length) return alert('同期する回答データがありません。');
+  if(!currentFileId) return showNotice('フォームを開いてから同期してください。');
+  if(!cloudResponseList.length) return showNotice('同期する回答データがありません。');
   let config = {};
   try { config = JSON.parse(safeStorage.getItem(googleSheetsConfigKey()) || '{}') || {}; } catch {}
-  if(!config.url || !config.key){ loadGoogleSheetsConfig(); return alert('先にApps Script URLと共有キーを入力して「連携設定を保存」してください。'); }
-  if(cloudResponseList.length > 5000) return alert('一度に同期できるのは5,000件までです。');
+  if(!config.url || !config.key){ loadGoogleSheetsConfig(); return showNotice('先にApps Script URLと共有キーを入力して「連携設定を保存」をクリックしてください。'); }
+  if(cloudResponseList.length > 5000) return showNotice('一度に同期できるのは5,000件までです。');
   const status = document.getElementById('qfmSheetsStatus');
   if(status) status.textContent = '送信処理中…';
   const payload = {
@@ -2163,19 +2234,18 @@ async function syncAnswersToGoogleSheets(){
     rows: answerExportRows()
   };
   try {
-    // Apps Scriptへのシンプルリクエスト。no-corsでは応答本文を読めないため、成功確定とは表示しない。
     await fetch(config.url, { method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain;charset=utf-8'}, body:JSON.stringify(payload) });
     if(status) status.textContent = `同期リクエストを送信しました（${cloudResponseList.length}件）。Googleスプレッドシート側で反映を確認してください。`;
-    alert('同期リクエストを送信しました。no-cors通信のため、実際に反映されたかはGoogleスプレッドシート側で確認してください。');
+    showNotice('同期リクエストを送信しました。Googleスプレッドシート側で反映をご確認ください。');
   } catch(error) {
-    if(status) status.textContent = '送信に失敗しました。URL・通信状態・Apps Scriptの公開設定を確認してください。';
-    alert('同期リクエストに失敗しました: ' + (error.message || error));
+    if(status) status.textContent = '送信に失敗しました。URL・通信状態・Apps Scriptの公開設定をご確認ください。';
+    showNotice('同期リクエストに失敗しました: ' + (error.message || error));
   }
 }
 
 function exportAnswersCSV(){
   const records = cloudResponseList;
-  if(records.length === 0) return alert('データがありません');
+  if(records.length === 0) return showNotice('出力する回答データがありません。');
   const csvCell = value => { let text = String(value ?? ''); if(/^[=+@\t\r]/.test(text) || /^-[^0-9]/.test(text)) text = "'" + text; return '"' + text.replace(/"/g,'""') + '"'; };
   let csvRows = [];
   let headers = ['回答者名', '回答日時'];
@@ -2197,10 +2267,11 @@ function exportAnswersCSV(){
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a'); a.href = url; a.download = (quizTitle || 'フォーム') + '_回答.csv';
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  showNotice('CSVファイルをダウンロードしました。');
 }
 
 function exportStatsImage(){
-  if(!cloudResponseList.length) return alert('データがありません');
+  if(!cloudResponseList.length) return showNotice('保存する集計データがありません。');
   const canvas=document.createElement('canvas'),ctx=canvas.getContext('2d');
   const statQuestions = normalizeQuestions(questionsData).filter(q=>q.type!=='info');
   const height = Math.max(700, 180 + statQuestions.length * 150);
@@ -2223,6 +2294,7 @@ function exportStatsImage(){
     const url=URL.createObjectURL(blob),a=document.createElement('a');
     a.href=url; a.download='集計データ.png';
     document.body.append(a); a.click(); a.remove();
+    showNotice('集計画像を保存しました。');
   },'image/png');
 }
 
@@ -2235,6 +2307,7 @@ function exportJsonFile(){
   const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({version:3,metadata,settings:formSettings,questions:questionsData}, null, 2));
   const a = document.createElement('a'); a.href = dataStr; a.download = "backup.json";
   document.body.appendChild(a); a.click(); a.remove();
+  showNotice('バックアップファイルを保存しました。');
 }
 
 function importJsonFile(e){
@@ -2248,8 +2321,8 @@ function importJsonFile(e){
         if(parsed.settings) formSettings = { ...formSettings, ...parsed.settings };
         renderQuestionsEditor();
         autoSaveCloud();
-        alert('読み込みました');
-      } catch(e) { alert('読み込み失敗'); }
+        showNotice('バックアップファイルを読み込みました。');
+      } catch(e) { showNotice('バックアップファイルの読み込みに失敗しました。'); }
     };
   }
 }
@@ -2299,7 +2372,7 @@ function preparePlayData() {
 
 function startTestPlay(){
   collectQuestionsFromDOM();
-  if(questionsData.length === 0) return alert('質問がありません');
+  if(questionsData.length === 0) return showNotice('質問が登録されていません。');
   quizTitle = document.getElementById('quiz-title-input').value.trim() || "無題";
   quizDesc = document.getElementById('qDesc').value.trim();
   quizGenre = document.getElementById('quizGenre').value.trim() || "一般";
@@ -2569,16 +2642,16 @@ async function handleAnswerFile(event,qIdx){
   const file=event.target.files && event.target.files[0];
   if(!file) return;
   const allowed = ['image/jpeg','image/png','image/gif','image/webp','application/pdf'];
-  if(!allowed.includes(file.type)) { alert('対応ファイルは JPG・PNG・GIF・WebP・PDF です。'); event.target.value=''; return; }
-  if(file.size > 10 * 1024 * 1024) { alert('ファイルは10MB以下にしてください。'); event.target.value=''; return; }
+  if(!allowed.includes(file.type)) { showNotice('対応ファイルは JPG・PNG・GIF・WebP・PDF です。'); event.target.value=''; return; }
+  if(file.size > 10 * 1024 * 1024) { showNotice('ファイルサイズは10MB以下にしてください。'); event.target.value=''; return; }
   if(!isSharedMode){
     userFormAnswers[qIdx] = { name:file.name, type:file.type, previewOnly:true };
     updatePlayProgress();
-    alert('プレビューでは添付の確認のみ行います。実際の保存は公開フォームから送信してください。');
+    showNotice('プレビューでは添付の確認のみ行います。実際の保存は公開フォームから送信してください。', 3200);
     return;
   }
   const formId = new URLSearchParams(window.location.search).get('id') || currentFileId;
-  if(!formId || !dbClient.storage){ alert('ファイル保存機能を利用できません。Supabase Storageの設定を確認してください。'); event.target.value=''; return; }
+  if(!formId || !dbClient.storage){ showNotice('ファイル保存機能を利用できません。Supabase Storageの設定をご確認ください。'); event.target.value=''; return; }
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-100) || 'upload';
   const unique = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const path = `${formId}/${unique}-${safeName}`;
@@ -2589,20 +2662,20 @@ async function handleAnswerFile(event,qIdx){
     if(error) throw error;
     userFormAnswers[qIdx] = { name:file.name, type:file.type, path:data?.path || path, bucket:'qfm-uploads' };
     updatePlayProgress();
-    alert('ファイルを添付しました。');
+    showNotice('ファイルを添付しました。');
   } catch(error) {
-    alert('ファイルのアップロードに失敗しました。Supabase Storageの設定・権限を確認してください。');
+    showNotice('ファイルのアップロードに失敗しました。Supabase Storageの設定・権限をご確認ください。');
     input.value = '';
   } finally { input.disabled = false; }
 }
 
 async function openUploadedAnswerFile(path){
-  if(!path || !dbClient.storage) return alert('添付ファイル情報がありません。');
+  if(!path || !dbClient.storage) return showNotice('添付ファイル情報がありません。');
   try {
     const { data, error } = await dbClient.storage.from('qfm-uploads').createSignedUrl(path, 3600);
     if(error || !data?.signedUrl) throw error || new Error('URLを取得できません');
     window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
-  } catch { alert('添付ファイルを開けません。フォーム所有者でログインしているか、Storageの閲覧ポリシーを確認してください。'); }
+  } catch { showNotice('添付ファイルを開けません。フォーム所有者でログインしているか、Storageの閲覧ポリシーをご確認ください。'); }
 }
 
 function updateOtherAnswer(qIdx, oIdx) {
@@ -2634,7 +2707,7 @@ function submitPlayAnswers(){
       const value = userFormAnswers[i];
       const empty = value === null || value === undefined ||
         (typeof value === 'object' ? !value.name : String(value).trim() === '');
-      if(empty) { const target=document.querySelector(`#playQuestionsContainer .play-question-block[data-play-index="${i}"]`); if(target){ target.scrollIntoView({behavior:'smooth',block:'center'}); target.classList.add('required-error-highlight'); setTimeout(()=>target.classList.remove('required-error-highlight'),2200); } alert(`Q${i+1}は必須質問です。回答を入力してください。`); return; }
+      if(empty) { const target=document.querySelector(`#playQuestionsContainer .play-question-block[data-play-index="${i}"]`); if(target){ target.scrollIntoView({behavior:'smooth',block:'center'}); target.classList.add('required-error-highlight'); setTimeout(()=>target.classList.remove('required-error-highlight'),2200); } showNotice(`Q${i+1}は必須質問です。回答を入力してください。`); return; }
     }
   }
   if(appMode !== 'form') {
