@@ -90,7 +90,7 @@ body{background:var(--b);color:var(--t);padding:15px;display:flex;justify-conten
 .question-insert-line.active::before, .question-insert-line:hover::before { height:3px; background:var(--p); box-shadow:0 0 8px var(--p); }
 .question-insert-line.active::after { content:'ここに貼り付け'; position:absolute; right:8px; top:-17px; font-size:.7rem; color:var(--p); background:var(--c); padding:2px 7px; border-radius:6px; font-weight:800; }
 .question-comment-note { margin-top:12px; padding:10px 12px; border-left:3px solid var(--p); border-radius:8px; background:var(--p-light); color:var(--t); font-size:.85rem; white-space:pre-wrap; }
-body.answering .mobile-tab-bar { display:none !important; }
+body.answering .mobile-tab-bar, body.answering .site-header, body.answering .home-nav, body.answering .howto-nav { display:none !important; }
 body.answering { padding-bottom:12px !important; }
 
 .e-title { font-size: 1.6rem; font-weight: 800; border-bottom: 2px dashed transparent; outline: none; width: 100%; color: var(--t); background: transparent; }
@@ -144,6 +144,8 @@ body.answering { padding-bottom:12px !important; }
 .q-title-view { font-size: 1.5rem; font-weight: 800; color: var(--p); margin-bottom: 10px; text-align: center; }
 .play-form-desc { font-size: 0.95rem; color: #94a3b8; margin-bottom: 25px; text-align: center; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
 
+.play-question-block.required-error-highlight { border:2px solid #ef4444 !important; box-shadow:0 0 0 4px rgba(239,68,68,.18) !important; animation:requiredPulse .6s ease 2; }
+@keyframes requiredPulse { 50% { transform:scale(1.006); } }
 .play-question-block { background: var(--c); border: 1px solid #dadce0; border-radius: 9px; padding: 28px 30px; margin-bottom: 16px; box-shadow: 0 1px 2px rgba(60,64,67,.12); }
 .play-question-block .q-text { font-size: 1.05rem; font-weight: 500; margin-bottom: 26px; color: var(--t); }
 .play-question-block .text-ans-input { width: min(100%, 420px); border: 0; border-bottom: 1px solid #bdbdbd; border-radius: 0; padding: 8px 0; background: transparent; font-weight: 400; }
@@ -188,7 +190,7 @@ body.answering { padding-bottom:12px !important; }
   }
   .site-header { display: none; }
   .mobile-tab-bar { display: flex; }
-  body.answering .mobile-tab-bar { display:none !important; }
+  body.answering .mobile-tab-bar, body.answering .site-header { display:none !important; }
   body { padding: 12px; padding-bottom: 160px; }
 }
 </style>
@@ -275,6 +277,8 @@ body.answering { padding-bottom:12px !important; }
         <button class="template-btn" onclick="createFromTemplate('survey')">📊 一般アンケート</button>
         <button class="template-btn" onclick="createFromTemplate('booking')">📝 面談・予約受付</button>
         <button class="template-btn" onclick="createFromTemplate('contact')">📇 連絡先・プロフィール</button>
+        <button class="template-btn" onclick="createFromTemplate('miniquiz')">🧠 ミニクイズ</button>
+        <button class="template-btn" onclick="createFromTemplate('classvote')">🗳️ クラス投票</button>
       </div>
     </div>
 
@@ -298,6 +302,18 @@ body.answering { padding-bottom:12px !important; }
         <button class="ft-btn" onclick="addTextSection()">＋ セクションを追加</button>
         <button class="ft-btn" onclick="promptAddMedia('image')">🖼️ 画像挿入</button>
       </div>
+      <div id="collaborationPanel" class="form-header-card" style="margin:12px 0;padding:16px;display:none;">
+        <div style="font-weight:800;font-size:1rem;margin-bottom:6px;">👥 共同製作</div>
+        <div style="font-size:.85rem;color:var(--t);margin-bottom:10px;">共同編集リンクを発行して、相手に共有できます。相手もログインが必要です。</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <button class="m-btn" type="button" onclick="createCollabInvite()">🔗 共同編集リンクを発行</button>
+          <button class="m-btn" type="button" onclick="copyCollabInvite()" style="background:#475569;">リンクをコピー</button>
+        </div>
+        <input id="collabInviteUrl" type="text" readonly placeholder="発行したリンクがここに表示されます" style="width:100%;margin-top:10px;padding:10px;border:1px solid var(--border);border-radius:9px;background:var(--input-bg);color:var(--t);">
+        <div id="collabStatus" style="font-size:.8rem;color:var(--s);margin-top:8px;"></div>
+        <div style="font-size:.75rem;color:var(--t);margin-top:8px;">※リンクは1回限り・7日間有効です。共同編集者は質問や設定を編集できます。削除などの所有者操作はできません。</div>
+      </div>
+
       <div class="form-header-card pop-anim">
         <input type="text" id="quiz-title-input" class="e-title" placeholder="タイトルを入力" oninput="updatePageTitle(); autoSaveCloud();">
         <input type="text" id="qDesc" class="e-desc" placeholder="フォームの説明を入力" oninput="autoSaveCloud()">
@@ -398,6 +414,8 @@ body.answering { padding-bottom:12px !important; }
           <span>回答受付上限（0で無制限）:</span>
           <input type="number" id="responseLimit" min="0" value="0" oninput="autoSaveCloud()" style="padding:8px 12px; border:1px solid var(--border); border-radius:8px; width:110px; background:var(--input-bg); color:var(--t); font-weight:bold;">
         </div>
+        <div class="settings-row"><label><input type="checkbox" id="requireRespondentName" onchange="autoSaveCloud()"> 回答時に名前の入力を必須にする</label></div>
+        <p style="font-size:.78rem;color:#94a3b8;margin:-5px 0 8px 4px;">オフの場合、名前欄は任意です。空欄で送信すると「匿名」として保存されます。</p>
         <div class="settings-row"><label><input type="checkbox" id="collectEmail" onchange="autoSaveCloud()"> 回答時にメールアドレスを収集する</label></div>
         <p style="font-size:.78rem;color:#94a3b8;margin:-5px 0 8px 4px;">メールアドレスは回答者名と一緒に回答データへ保存されます。</p>
         <hr style="border:0;border-top:1px solid var(--border);margin:16px 0;">
@@ -467,8 +485,8 @@ body.answering { padding-bottom:12px !important; }
       <p id="sDet" style="color:#94a3b8; margin-bottom:10px; font-weight:600;"></p>
       
       <div id="rankingRegisterSection" style="max-width:360px; margin:0 auto 25px auto; background:var(--input-bg); padding:18px; border-radius:16px; border:1px solid var(--border);">
-        <p style="font-size:0.85rem; color:#94a3b8; font-weight:700; margin-bottom:10px; line-height:1.4;">※名前を入力し、「回答を送信・登録する」ボタンを押してクラウドに記録してください。</p>
-        <input type="text" id="respondent-name-input" placeholder="名前を入力" style="width:100%; padding:12px; border:2px solid var(--border); border-radius:12px; margin-bottom:12px; text-align:center; font-size:1rem; outline:none; font-weight:600; background:var(--c); color:var(--t);">
+        <p style="font-size:0.85rem; color:#94a3b8; font-weight:700; margin-bottom:10px; line-height:1.4;">名前は任意です（フォーム作成者が必須に設定している場合を除く）。</p>
+        <input type="text" id="respondent-name-input" placeholder="名前（任意）" style="width:100%; padding:12px; border:2px solid var(--border); border-radius:12px; margin-bottom:12px; text-align:center; font-size:1rem; outline:none; font-weight:600; background:var(--c); color:var(--t);">
         <input type="email" id="respondent-email-input" placeholder="メールアドレス（任意）" style="display:none;width:100%;padding:12px;border:2px solid var(--border);border-radius:12px;margin-bottom:12px;text-align:center;font-size:1rem;background:var(--c);color:var(--t);">
         <button class="m-btn s-btn" style="padding:12px 18px; font-size:0.95rem; width:100%; border-radius:12px;" onclick="submitUserResponse()">回答を送信・登録する</button>
       </div>
@@ -609,6 +627,11 @@ let questionsData=[], activePlayData=[], userFormAnswers=[], sc=0, totalScore=0,
 let submittingResponse = false, responseSubmitted = false, answeredQuestionCount = 0;
 let visiblePlayQuestionIndexes = new Set();
 let activeFormRealtimeChannel = null;
+let currentFormOwnerId = null;
+let currentUserId = null;
+let currentCollabInviteUrl = "";
+let isFormCollaborator = false;
+let collabAcceptInProgress = false;
 let localSaveTimestamps = new Set();
 let remoteUpdateNoticeShown = false;
 let activeGenreFilter = "すべて";
@@ -616,7 +639,7 @@ let taxonomyCache = { genre: ["一般"], category: ["一般"] };
 let taxonomyUserKey = "qfm_taxonomy_guest";
 let quizMaxScore = 0, quizCorrectCount = 0, quizGradedCount = 0;
 let isFavorite = false, isPublicState = false;
-let formSettings = { startAt: "", responseLimit: 0, collectEmail: false, allowEdit: false, accentColor: "#6366f1", cardColor: "#1e293b", headerImage: "", completionMessage: "あなたの回答は正常に保存されました。" };
+let formSettings = { startAt: "", responseLimit: 0, requireRespondentName: false, collectEmail: false, allowEdit: false, accentColor: "#6366f1", cardColor: "#1e293b", headerImage: "", completionMessage: "あなたの回答は正常に保存されました。" };
 let isNewlyCreated = false;
 let selectedQuestionIndex = null;
 let questionInsertIndex = null;
@@ -705,12 +728,18 @@ dbClient.auth.onAuthStateChange((event, session) => {
     const myFormsSection = document.getElementById('my-forms-section');
 
     if (session) {
+        currentUserId = session.user.id;
         if(loggedOutArea) loggedOutArea.style.display = 'none';
         if(loggedInArea) loggedInArea.style.display = 'flex';
         if(emailDisplay) emailDisplay.innerText = session.user.email;
         if(myFormsSection) myFormsSection.style.display = 'flex';
-        setTimeout(() => loadMyForms(session.user.id), 0);
+        setTimeout(async () => {
+          await loadMyForms(session.user.id);
+          const pending = safeStorage.getItem('qfm_pending_collab_token');
+          if (pending) await acceptCollabInvite(pending);
+        }, 0);
     } else {
+        currentUserId = null;
         if(loggedOutArea) loggedOutArea.style.display = 'block';
         if(loggedInArea) loggedInArea.style.display = 'none';
         if(myFormsSection) myFormsSection.style.display = 'none';
@@ -730,6 +759,14 @@ window.addEventListener('DOMContentLoaded', async () => {
   const urlParams = new URLSearchParams(window.location.search);
   const mode = urlParams.get('mode');
   const formId = urlParams.get('id');
+  const collabToken = urlParams.get('collab');
+  if (collabToken) {
+    safeStorage.setItem('qfm_pending_collab_token', collabToken);
+    const { data: { session } } = await dbClient.auth.getSession();
+    if (session) await acceptCollabInvite(collabToken);
+    else { switchPage('home'); showNotice('共同編集リンクを受け取りました。ログインまたは新規登録すると参加できます。'); }
+    return;
+  }
   
   if (mode === 'answer' && formId) {
     const { data, error } = await dbClient.from('forms').select('*').eq('id', formId).single();
@@ -855,6 +892,8 @@ function switchFormTab(tabName){
     document.getElementById('tabContentAnswers').classList.add('active');
     if(currentFileId) { loadGoogleSheetsConfig(); loadMyFormResponses(currentFileId); }
   } else if(tabName === 'settings'){
+    const nameRequired = document.getElementById('requireRespondentName');
+    if(nameRequired) nameRequired.checked = !!formSettings.requireRespondentName;
     document.getElementById('ftabSettings').classList.add('active');
     document.getElementById('tabContentSettings').classList.add('active');
   }
@@ -970,7 +1009,6 @@ async function loadMyForms(userId){
   const { data: files, error } = await dbClient
     .from('forms')
     .select('*')
-    .eq('user_id', userId)
     .order('created_at', { ascending: false });
 
   if(error) return;
@@ -1073,7 +1111,7 @@ function resetNewFormSettings() {
   currentFileId=null; quizDeadline=''; shuffleMode=false; speedBonus=false; preventOnce=false; timeLimit=0; randomCount=0;
   isFavorite=false; isPublicState=false;
   document.getElementById('quizDeadline').value='';
-  formSettings = { startAt: '', responseLimit: 0, collectEmail: false, allowEdit: false, accentColor: '#6366f1', cardColor: '#1e293b', headerImage: '', completionMessage: 'あなたの回答は正常に保存されました。' };
+  formSettings = { startAt: '', responseLimit: 0, requireRespondentName: false, collectEmail: false, allowEdit: false, accentColor: '#6366f1', cardColor: '#1e293b', headerImage: '', completionMessage: 'あなたの回答は正常に保存されました。' };
   document.getElementById('responseStartAt').value='';
   document.getElementById('formAccentColor').value = formSettings.accentColor;
   document.getElementById('formCardColor').value = formSettings.cardColor;
@@ -1126,6 +1164,7 @@ async function createNewQuiz(category = "一般", genre = "一般"){
   renderTaxonomySelect('genre', quizGenre);
   renderTaxonomySelect('category', quizCategory);
   document.getElementById('chkFavorite').checked = false;
+  document.getElementById('requireRespondentName').checked = !!formSettings.requireRespondentName;
   document.getElementById('selAppMode').value = appMode;
   document.getElementById('shArea').style.display = 'none';
   renderQuestionsEditor();
@@ -1158,6 +1197,12 @@ async function createFromTemplate(type){
     questionsData = [
       { q: "希望日", type: "date", opts: ["", ""], optJumps: ["", ""], ans: "", exp: "", hint: "", diff: "★☆☆", score: 10, imageUrl: "", videoUrl: "", required: true, maxLen: 0 }
     ];
+  } else if(type === 'miniquiz'){
+    quizTitle = 'ミニクイズ'; quizDesc = '全問正解を目指そう！'; quizGenre = 'クイズ'; quizCategory = '学習'; quizTag = 'ミニクイズ';
+    questionsData = [{ q:'日本の首都は？', type:'select', opts:['東京','大阪','京都'], optJumps:['','',''], ans:'A', exp:'東京が日本の首都です。', hint:'関東地方にあります。', diff:'★☆☆', score:10, imageUrl:'', videoUrl:'', required:true, maxLen:0 }];
+  } else if(type === 'classvote'){
+    quizTitle = 'クラス投票'; quizDesc = '投票したい選択肢を選んでください。'; quizGenre = '学校'; quizCategory = '投票'; quizTag = 'クラス投票';
+    questionsData = [{ q:'次の企画で一番やりたいものは？', type:'select', opts:['レクリエーション','映画鑑賞','スポーツ','その他'], optJumps:['','','',''], ans:'A', exp:'', hint:'', diff:'★☆☆', score:10, imageUrl:'', videoUrl:'', required:true, maxLen:0 }];
   } else if(type === 'contact'){
     quizTitle = "プロフィール登録"; quizDesc = "情報を入力してください。"; quizGenre = "連絡先"; quizCategory = "プロフィール"; quizTag = "連絡先";
     questionsData = [
@@ -1194,6 +1239,7 @@ async function createFromTemplate(type){
   renderTaxonomySelect('genre', quizGenre);
   renderTaxonomySelect('category', quizCategory);
   document.getElementById('chkFavorite').checked = false;
+  document.getElementById('requireRespondentName').checked = !!formSettings.requireRespondentName;
   document.getElementById('selAppMode').value = appMode;
   document.getElementById('shArea').style.display = 'none';
   renderQuestionsEditor();
@@ -1224,7 +1270,7 @@ function startFormRealtimeWatch(formId){
         if(sameLocalContent) return;
         if(remoteUpdateNoticeShown) return;
         remoteUpdateNoticeShown = true;
-        showNotice('このフォームが別の編集画面から更新されました。現在の画面は自動上書きせず、編集内容を守るため更新通知だけを表示しています。');
+        showNotice('共同編集者または別の編集画面から更新されました。編集中の内容を守るため自動上書きはせず、最新版の読み込みを選べます。');
         const box = document.getElementById('app-notice');
         if(box && !box.querySelector('[data-qfm-reload]')){
           const reload = document.createElement('button');
@@ -1244,11 +1290,22 @@ function startFormRealtimeWatch(formId){
 
 async function openFile(id){
   isNewlyCreated = false;
+  const { data: { session: openSession } } = await dbClient.auth.getSession();
+  currentUserId = openSession?.user?.id || currentUserId;
   cloudResponseList=[];
   document.getElementById('answerStatsContainer').replaceChildren();
   const { data, error } = await dbClient.from('forms').select('*').eq('id', id).single();
   if(error || !data) return;
   currentFileId = data.id;
+  currentFormOwnerId = data.user_id || null;
+  isFormCollaborator = !!currentUserId && currentFormOwnerId !== currentUserId;
+  currentCollabInviteUrl = '';
+  const collabPanel = document.getElementById('collaborationPanel');
+  if (collabPanel) collabPanel.style.display = (!isFormCollaborator && currentUserId === currentFormOwnerId) ? 'block' : 'none';
+  const collabUrlInput = document.getElementById('collabInviteUrl');
+  if (collabUrlInput) collabUrlInput.value = '';
+  const collabStatus = document.getElementById('collabStatus');
+  if (collabStatus) collabStatus.textContent = isFormCollaborator ? '共同編集者として参加中' : '';
   quizTitle = data.title || "";
   quizDesc = data.desc || "";
   quizGenre = data.genre || "一般";
@@ -1268,6 +1325,7 @@ async function openFile(id){
   document.getElementById('quizDeadline').value = quizDeadline ? quizDeadline.slice(0, 16) : "";
   document.getElementById('responseStartAt').value = formSettings.startAt ? formSettings.startAt.slice(0,16) : "";
   document.getElementById('responseLimit').value = formSettings.responseLimit || 0;
+  document.getElementById('requireRespondentName').checked = !!formSettings.requireRespondentName;
   document.getElementById('collectEmail').checked = !!formSettings.collectEmail;
   document.getElementById('formAccentColor').value = formSettings.accentColor;
   document.getElementById('formCardColor').value = formSettings.cardColor;
@@ -1294,6 +1352,44 @@ async function openFile(id){
   renderQuestionsEditor();
   switchPage('edit');
   startFormRealtimeWatch(currentFileId);
+}
+
+async function createCollabInvite(){
+  if(!currentFileId || !currentUserId || currentFormOwnerId !== currentUserId){ alert('共同編集リンクを発行できるのはフォームの所有者だけです。'); return; }
+  const token = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`).replace(/-/g,'');
+  const expiresAt = new Date(Date.now() + 7*24*60*60*1000).toISOString();
+  const { error } = await dbClient.from('form_collab_invites').insert({ form_id: currentFileId, owner_id: currentUserId, token, expires_at: expiresAt });
+  if(error){ alert('招待リンクの発行に失敗しました。Supabaseの共同製作SQLを実行したか確認してね。\n' + error.message); return; }
+  currentCollabInviteUrl = `${publicPageUrl()}?collab=${encodeURIComponent(token)}`;
+  const input = document.getElementById('collabInviteUrl');
+  if(input) input.value = currentCollabInviteUrl;
+  const status = document.getElementById('collabStatus');
+  if(status) status.textContent = '招待リンクを発行しました（7日間有効・1回限り）';
+}
+async function copyCollabInvite(){
+  const value = document.getElementById('collabInviteUrl')?.value || currentCollabInviteUrl;
+  if(!value){ alert('先に共同編集リンクを発行してね。'); return; }
+  try { await navigator.clipboard.writeText(value); showNotice('共同編集リンクをコピーしました。'); }
+  catch { const input=document.getElementById('collabInviteUrl'); input?.select(); document.execCommand('copy'); showNotice('共同編集リンクをコピーしました。'); }
+}
+async function acceptCollabInvite(token){
+  if(!token || collabAcceptInProgress) return;
+  collabAcceptInProgress = true;
+  const { data: { session } } = await dbClient.auth.getSession();
+  if(!session){ safeStorage.setItem('qfm_pending_collab_token', token); switchPage('home'); showNotice('共同編集に参加するにはログインが必要です。'); collabAcceptInProgress = false; return; }
+  const { data, error } = await dbClient.rpc('qfm_accept_collab_invite', { p_token: token });
+  if(error || !data?.form_id){
+    safeStorage.removeItem('qfm_pending_collab_token');
+    alert('招待リンクを利用できません。期限切れ・使用済み・無効なリンクの可能性があります。' + (error?.message ? '\n' + error.message : ''));
+    try { history.replaceState(null,'',window.location.pathname); } catch {}
+    collabAcceptInProgress = false;
+    return;
+  }
+  safeStorage.removeItem('qfm_pending_collab_token');
+  try { history.replaceState(null,'',window.location.pathname); } catch {}
+  await openFile(data.form_id);
+  showNotice('共同製作に参加しました！編集内容はクラウドに自動保存されます。');
+  collabAcceptInProgress = false;
 }
 
 async function deleteFile(id){
@@ -1337,6 +1433,7 @@ function autoSaveCloud(){
   formSettings = {
     startAt: document.getElementById('responseStartAt').value || "",
     responseLimit: Math.max(0, parseInt(document.getElementById('responseLimit').value, 10) || 0),
+    requireRespondentName: document.getElementById('requireRespondentName').checked,
     collectEmail: document.getElementById('collectEmail').checked,
     allowEdit: false,
     accentColor: document.getElementById('formAccentColor').value || '#6366f1',
@@ -1369,7 +1466,7 @@ function autoSaveCloud(){
       const {data:{session},error:sessionError}=await dbClient.auth.getSession();
       if(sessionError || !session) throw new Error();
       
-      let { error } = await dbClient.from('forms').update(payload).eq('id',targetId).eq('user_id',session.user.id);
+      let { error } = await dbClient.from('forms').update(payload).eq('id',targetId);
       // 互換性のため、未追加の任意カラムがあれば外して再試行する
       for (let attempt = 0; error && attempt < 2; attempt++) {
         const message = error.message || '';
@@ -1380,7 +1477,7 @@ function autoSaveCloud(){
         } else {
           break;
         }
-        const retry = await dbClient.from('forms').update(payload).eq('id',targetId).eq('user_id',session.user.id);
+        const retry = await dbClient.from('forms').update(payload).eq('id',targetId);
         error = retry.error;
       }
       if(error) throw error;
@@ -1511,6 +1608,8 @@ function renderQuestionsEditor(){
         <div class="q-card-header-bottom">
           <div></div>
           <div class="card-actions">
+            <button type="button" class="card-action-btn" onclick="moveQuestion(${index}, -1)" title="上へ" ${index===0?'disabled':''}>↑</button>
+            <button type="button" class="card-action-btn" onclick="moveQuestion(${index}, 1)" title="下へ" ${index===questionsData.length-1?'disabled':''}>↓</button>
             <button type="button" class="card-action-btn" onclick="duplicateQuestion(${index})">複製</button>
             <button type="button" class="card-action-btn del" onclick="deleteQuestion(${index})">削除</button>
           </div>
@@ -1574,6 +1673,12 @@ function renderQuestionsEditor(){
       card.appendChild(note);
     }
 
+    const mediaPreview = document.createElement('div');
+    mediaPreview.className = 'q-media-preview';
+    mediaPreview.style.cssText = 'display:flex;gap:10px;flex-wrap:wrap;margin:8px 0;';
+    if(qObj.imageUrl) { const im=document.createElement('img'); im.src=safeMediaUrl(qObj.imageUrl); im.alt='画像プレビュー'; im.style.cssText='max-width:150px;max-height:100px;object-fit:contain;border:1px solid var(--border);border-radius:8px;'; im.onerror=()=>{im.alt='画像を読み込めません';}; mediaPreview.appendChild(im); }
+    if(qObj.videoUrl) { const v=document.createElement('video'); v.src=safeMediaUrl(qObj.videoUrl,'video'); v.controls=true; v.preload='metadata'; v.style.cssText='max-width:180px;max-height:110px;border-radius:8px;'; mediaPreview.appendChild(v); }
+    if(mediaPreview.childNodes.length) card.appendChild(mediaPreview);
     card.addEventListener('click', (event) => {
       if (event.target.closest('input, textarea, select, button, label, a')) return;
       selectQuestionForEditing(index);
@@ -1581,6 +1686,7 @@ function renderQuestionsEditor(){
     card.addEventListener('focusin', () => selectQuestionForEditing(index));
     container.appendChild(card);
   });
+  renderQuestionInsertionLines();
 }
 
 
@@ -1794,7 +1900,9 @@ async function submitUserResponse() {
     if(Number.isFinite(startTime) && now < startTime) throw new Error('回答受付はまだ開始していません。');
     if(Number.isFinite(endTime) && now > endTime) throw new Error('回答受付は終了しました。');
 
-    const respondentName = document.getElementById('respondent-name-input').value.trim() || '名無しの回答者';
+    const nameInput = document.getElementById('respondent-name-input');
+    const respondentName = nameInput.value.trim();
+    if(formSettings.requireRespondentName && !respondentName) throw new Error('名前を入力してください。');
     const emailInput = document.getElementById('respondent-email-input');
     const respondentEmail = formSettings.collectEmail ? (emailInput?.value.trim() || '') : '';
     if(formSettings.collectEmail && (!respondentEmail || !emailInput.checkValidity())) throw new Error('有効なメールアドレスを入力してください。');
@@ -1805,7 +1913,8 @@ async function submitUserResponse() {
       if((count || 0) >= formSettings.responseLimit) throw new Error('回答受付数が上限に達しました。');
     }
 
-    const storedRespondentName = respondentEmail ? `${respondentName}（${respondentEmail}）` : respondentName;
+    const displayName = respondentName || '匿名';
+    const storedRespondentName = respondentEmail ? `${displayName}（${respondentEmail}）` : displayName;
     const finalScore = appMode === 'form' ? 'フォーム回答' : (`${totalScore}点 (${quizRate()}%)`);
     // 出題順をシャッフル／抽出していても、保存時は元の質問順に戻して集計とのズレを防ぐ。
     const detailedAnswers = Array(questionsData.length).fill(null);
@@ -2093,11 +2202,23 @@ function exportAnswersCSV(){
 function exportStatsImage(){
   if(!cloudResponseList.length) return alert('データがありません');
   const canvas=document.createElement('canvas'),ctx=canvas.getContext('2d');
-  canvas.width=1200; canvas.height=600;
+  const statQuestions = normalizeQuestions(questionsData).filter(q=>q.type!=='info');
+  const height = Math.max(700, 180 + statQuestions.length * 150);
+  canvas.width=1400; canvas.height=height;
   ctx.fillStyle='#1e293b'; ctx.fillRect(0,0,canvas.width,canvas.height);
-  ctx.fillStyle='#f8fafc'; ctx.font='28px sans-serif';
-  ctx.fillText(quizTitle || '統計結果', 50, 60);
-  ctx.fillText(`総回答数: ${cloudResponseList.length} 件`, 50, 110);
+  ctx.fillStyle='#f8fafc'; ctx.font='bold 30px sans-serif';
+  ctx.fillText((quizTitle || '統計結果').slice(0,50), 50, 60);
+  ctx.font='20px sans-serif'; ctx.fillText(`総回答数: ${cloudResponseList.length} 件`, 50, 105);
+  let y=160;
+  statQuestions.forEach((q, qi)=>{
+    ctx.fillStyle='#a5b4fc'; ctx.font='bold 21px sans-serif';
+    ctx.fillText(`Q${qi+1}. ${(q.q||'（質問文なし）').slice(0,65)}`,50,y); y+=34;
+    if(['select','radio','dropdown','multi','checkbox'].includes(q.type)){
+      const counts={}; cloudResponseList.forEach(rec=>{ const ans=rec.answer_data?.[qi]; String(ans??'').split(',').forEach(code=>{const key=code.trim().split(':')[0]; if(key) counts[key]=(counts[key]||0)+1;}); });
+      (q.opts||[]).slice(0,8).forEach((opt,oi)=>{const key=String.fromCharCode(65+oi),cnt=counts[key]||0,rate=cloudResponseList.length?Math.round(cnt/cloudResponseList.length*100):0;ctx.fillStyle='#f8fafc';ctx.font='16px sans-serif';ctx.fillText(`${key}: ${(opt||'（空欄）').slice(0,42)}  ${cnt}票 (${rate}%)`,70,y);ctx.fillStyle='#64748b';ctx.fillRect(70,y+8,900,8);ctx.fillStyle='#818cf8';ctx.fillRect(70,y+8,9*rate,8);y+=34;});
+    } else { ctx.fillStyle='#cbd5e1'; ctx.font='15px sans-serif'; ctx.fillText('記述式回答：回答一覧はExcel出力をご利用ください',70,y); y+=28; }
+    y+=20;
+  });
   canvas.toBlob(blob=>{
     const url=URL.createObjectURL(blob),a=document.createElement('a');
     a.href=url; a.download='集計データ.png';
@@ -2135,7 +2256,7 @@ function importJsonFile(e){
 
 function readFormSettings(value) {
   const raw = value && !Array.isArray(value) && typeof value === 'object' ? value._qf_settings : null;
-  return { startAt: raw?.startAt || "", responseLimit: Math.max(0, Number(raw?.responseLimit) || 0), collectEmail: !!raw?.collectEmail, allowEdit: false,
+  return { startAt: raw?.startAt || "", responseLimit: Math.max(0, Number(raw?.responseLimit) || 0), requireRespondentName: !!raw?.requireRespondentName, collectEmail: !!raw?.collectEmail, allowEdit: false,
     accentColor: /^#[0-9a-f]{6}$/i.test(raw?.accentColor || '') ? raw.accentColor : "#6366f1",
     cardColor: /^#[0-9a-f]{6}$/i.test(raw?.cardColor || '') ? raw.cardColor : "#1e293b",
     headerImage: safeMediaUrl(raw?.headerImage || ''),
@@ -2513,7 +2634,7 @@ function submitPlayAnswers(){
       const value = userFormAnswers[i];
       const empty = value === null || value === undefined ||
         (typeof value === 'object' ? !value.name : String(value).trim() === '');
-      if(empty) return alert(`Q${i+1}は必須質問です。回答を入力してください。`);
+      if(empty) { const target=document.querySelector(`#playQuestionsContainer .play-question-block[data-play-index="${i}"]`); if(target){ target.scrollIntoView({behavior:'smooth',block:'center'}); target.classList.add('required-error-highlight'); setTimeout(()=>target.classList.remove('required-error-highlight'),2200); } alert(`Q${i+1}は必須質問です。回答を入力してください。`); return; }
     }
   }
   if(appMode !== 'form') {
@@ -2528,6 +2649,10 @@ function submitPlayAnswers(){
     document.getElementById('rCom').textContent = '';
     document.getElementById('sDet').textContent = '';
   }
+  const nameInput = document.getElementById('respondent-name-input');
+  if(nameInput) { nameInput.required = !!formSettings.requireRespondentName; nameInput.placeholder = formSettings.requireRespondentName ? '名前を入力（必須）' : '名前（任意）'; }
+  const nameNote = document.querySelector('#rankingRegisterSection p');
+  if(nameNote) nameNote.textContent = formSettings.requireRespondentName ? '名前を入力してから送信してください。' : '名前は任意です。空欄の場合は「匿名」として保存されます。';
   const emailInput = document.getElementById('respondent-email-input');
   if(emailInput) {
     emailInput.style.display = formSettings.collectEmail ? 'block' : 'none';
